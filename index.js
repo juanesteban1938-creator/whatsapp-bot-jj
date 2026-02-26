@@ -1,9 +1,18 @@
-
 const express = require('express');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
+const cron = require('node-cron');
+const fetch = require('node-fetch');
+const admin = require('firebase-admin');
+
+// Inicialización de Firebase Admin
+if (!admin.apps.length) {
+    admin.initializeApp({
+        projectId: process.env.FIREBASE_PROJECT_ID || 'studio-6997056255-a0ecc'
+    });
+}
 
 const app = express();
 app.use(express.json());
@@ -15,7 +24,6 @@ const apiKey = process.env.API_KEY || 'jj-connect-2026';
 let qrCodeBase64 = '';
 let isReady = false;
 
-// Configuración del cliente de WhatsApp con optimizaciones para Railway
 const client = new Client({
     authStrategy: new LocalAuth({
         dataPath: './.wwebjs_auth'
@@ -70,54 +78,29 @@ app.get('/qr', (req, res) => {
     res.json({ qr: qrCodeBase64 });
 });
 
+// Endpoint 1: Notificación inicial de programación (con Imagen de Resumen)
 app.post('/send-service-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!data.clienteTelefono) return res.status(400).json({ error: 'Teléfono requerido' });
     if (!isReady) return res.status(503).json({ error: 'Bot no conectado' });
 
     try {
-        // SOLUCIÓN AL ERROR LID: Resolver el ID correcto del número
         const numberId = await client.getNumberId(data.clienteTelefono);
         if (!numberId) {
-            return res.status(404).json({ error: 'El número proporcionado no está registrado en WhatsApp.' });
+            return res.status(404).json({ error: 'El número no está en WhatsApp.' });
         }
         const chatId = numberId._serialized;
 
-        const textMessage = `¡Hola, ${data.clienteNombre}! 👋
+        const textMessage = `¡Hola, ${data.clienteNombre}! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nTu servicio ha sido programado exitosamente:\n\n━━━━━━━━━━━━━━━━\n🗓️ *Fecha:* ${data.fecha}\n⏰ *Hora:* ${data.hora}\n📍 *Origen:* ${data.origen}\n🏁 *Destino:* ${data.destino}\n🚗 *Placa:* ${data.placa}\n👤 *Conductor:* ${data.conductor}\n📞 *Contacto:* ${data.telefonoConductor}\n━━━━━━━━━━━━━━━━\n\nPor favor estar listo 10 minutos antes. 🙏\n\n¡Gracias por elegirnos! 🌟`;
 
-Soy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐
-
-Me complace confirmarte que tu servicio de transporte ha sido programado exitosamente. Aquí tienes todos los detalles:
-
-━━━━━━━━━━━━━━━━
-🗓️ *Fecha:* ${data.fecha}
-⏰ *Hora de recogida:* ${data.hora}
-📍 *Origen:* ${data.origen}
-🏁 *Destino:* ${data.destino}
-🚗 *Vehículo / Placa:* ${data.placa}
-👤 *Conductor:* ${data.conductor}
-📞 *Contacto conductor:* ${data.telefonoConductor}
-━━━━━━━━━━━━━━━━
-
-Por favor, estar listo 10 minutos antes de la hora de recogida. 🙏
-
-Si tienes alguna pregunta o necesitas hacer algún cambio, no dudes en contactarnos.
-
-¡Gracias por confiar en nosotros! 🌟
-*Transportes Especiales J&J*
-
-_Nova | Asistente Virtual_`;
-
-        // 1. Enviar mensaje de texto
         await client.sendMessage(chatId, textMessage);
 
-        // 2. Generar imagen del resumen con Puppeteer
         const browser = await puppeteer.launch({
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
         const page = await browser.newPage();
-        await page.setViewport({ width: 600, height: 750, deviceScaleFactor: 2 });
+        await page.setViewport({ width: 600, height: 700, deviceScaleFactor: 2 });
         
         const htmlContent = `
         <html>
@@ -182,14 +165,10 @@ _Nova | Asistente Virtual_`;
                             <div class="label">Conductor</div>
                             <div class="value">${data.conductor}</div>
                         </div>
-                        <div class="info-box" style="grid-column: span 2;">
-                            <div class="label">Contacto del Conductor</div>
-                            <div class="value">${data.telefonoConductor}</div>
-                        </div>
                     </div>
                 </div>
                 <div class="footer">
-                    Nova | Asistente Virtual de Transportes Especiales J&J
+                    Nova | Asistente Virtual J&J
                 </div>
             </div>
         </body>
@@ -200,14 +179,120 @@ _Nova | Asistente Virtual_`;
         const screenshot = await cardElement.screenshot({ encoding: 'base64' });
         await browser.close();
 
-        // 3. Enviar imagen del resumen
         const media = new MessageMedia('image/png', screenshot, 'resumen_servicio.png');
         await client.sendMessage(chatId, media);
 
-        res.json({ success: true, message: 'Notificación enviada correctamente' });
+        res.json({ success: true, message: 'Notificación enviada' });
     } catch (error) {
         console.error('Error enviando notificación avanzada:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Endpoint 2: Notificación de salida automática (Tiempo Real + Clima)
+app.post('/send-departure-notification', authMiddleware, async (req, res) => {
+    const data = req.body;
+    if (!data.clienteTelefono) return res.status(400).json({ error: 'Teléfono requerido' });
+    if (!isReady) return res.status(503).json({ error: 'Bot no conectado' });
+
+    try {
+        // A) Google Maps Directions API
+        const mapsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(data.origen)}&destination=${encodeURIComponent(data.destino)}&language=es&departure_time=now&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+        const mapsResponse = await fetch(mapsUrl);
+        const mapsData = await mapsResponse.json();
+        
+        let duracion = 'N/A';
+        let distancia = 'N/A';
+
+        if (mapsData.status === 'OK' && mapsData.routes.length > 0) {
+            const leg = mapsData.routes[0].legs[0];
+            duracion = leg.duration_in_traffic?.text || leg.duration.text;
+            distancia = leg.distance.text;
+        }
+
+        // B) OpenWeatherMap API
+        const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?q=Bogota,CO&appid=${process.env.OPENWEATHER_API_KEY}&units=metric&lang=es`;
+        const weatherResponse = await fetch(weatherUrl);
+        const weatherData = await weatherResponse.json();
+        
+        const temperatura = Math.round(weatherData.main.temp);
+        const sensacion = Math.round(weatherData.main.feels_like);
+        const descripcion = weatherData.weather[0].description;
+        const climaMain = weatherData.weather[0].main;
+        const humedad = weatherData.main.humidity;
+
+        // C) Recomendación
+        let recomendacion = '';
+        if (['Rain', 'Drizzle', 'Thunderstorm'].includes(climaMain)) {
+            recomendacion = '🌂 *Recomendación:* Hay probabilidad de lluvia. Te sugerimos llevar paraguas o impermeable.';
+        } else if (temperatura < 14) {
+            recomendacion = '🧥 *Recomendación:* Hace frío en el destino. Te sugerimos llevar abrigo o chaqueta.';
+        } else if (temperatura > 24) {
+            recomendacion = '☀️ *Recomendación:* Hace calor en el destino. Te sugerimos ropa ligera y protector solar.';
+        } else {
+            recomendacion = '✅ *Recomendación:* El clima está agradable. ¡Disfruta tu viaje!';
+        }
+
+        const numberId = await client.getNumberId(data.clienteTelefono);
+        if (!numberId) return res.status(404).json({ error: 'Número no registrado' });
+        const chatId = numberId._serialized;
+
+        const textMessage = `🚐 *¡Es hora de tu servicio!*\n\nHola ${data.clienteNombre}, soy *Nova* de *Transportes Especiales J&J* 👋\n\nTu conductor ya está en camino a recogerte. Aquí tienes la información de tu ruta en tiempo real:\n\n━━━━━━━━━━━━━━━━\n🗺️ *Distancia:* ${distancia}\n⏱️ *Tiempo estimado:* ${duracion} (con tráfico actual)\n━━━━━━━━━━━━━━━━\n\n🌤️ *Clima en tu destino ahora:*\n🌡️ Temperatura: ${temperatura}°C (sensación ${sensacion}°C)\n💧 Humedad: ${humedad}%\n☁️ Condición: ${descripcion}\n\n${recomendacion}\n\n━━━━━━━━━━━━━━━━\nPor favor estar listo en el punto de recogida. 🙏\n\n¡Buen viaje! 🌟\n*Transportes Especiales J&J*`;
+
+        await client.sendMessage(chatId, textMessage);
+        res.json({ success: true, message: 'Notificación de salida enviada' });
+
+    } catch (error) {
+        console.error('Error en notificación de salida:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Cron Job: Revisar servicios cada minuto
+cron.schedule('* * * * *', async () => {
+    const now = new Date();
+    console.log(`[CRON] Revisando servicios: ${now.toLocaleTimeString()}`);
+    
+    try {
+        const snapshot = await admin.firestore()
+            .collection('servicios')
+            .where('estado', 'in', ['Programado', 'programado'])
+            .where('notificacionSalidaEnviada', '==', false)
+            .get();
+
+        for (const doc of snapshot.docs) {
+            const servicio = doc.data();
+            
+            if (servicio.horaRecogidaTimestamp) {
+                const horaRecogida = servicio.horaRecogidaTimestamp.toDate();
+                const diff = Math.abs(now - horaRecogida) / 60000; 
+
+                if (diff <= 1) {
+                    console.log(`[CRON] Disparando notificación automática para: ${servicio.cliente}`);
+                    
+                    const response = await fetch(`http://localhost:${port}/send-departure-notification`, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json', 
+                            'x-api-key': apiKey 
+                        },
+                        body: JSON.stringify({
+                            clienteTelefono: servicio.telefonoCliente,
+                            clienteNombre: servicio.cliente,
+                            origen: servicio.origen,
+                            destino: servicio.destino
+                        })
+                    });
+
+                    if (response.ok) {
+                        await doc.ref.update({ notificacionSalidaEnviada: true });
+                        console.log(`[CRON] Servicio actualizado exitosamente.`);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[CRON] Error:', error);
     }
 });
 
