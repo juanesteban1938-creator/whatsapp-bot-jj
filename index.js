@@ -1,6 +1,6 @@
 /**
  * VIANOVA S.A.S - WhatsApp Bot Engine (Nova)
- * Versión: 3.5.0 (Resolución de ID Colombia + Puppeteer + Clima + Cron)
+ * Versión: 3.6.0 (Resolución de ID Colombia + Tarjetas HD + Clima + Cron)
  */
 
 const express = require('express');
@@ -31,7 +31,6 @@ const WEATHER_KEY = process.env.OPENWEATHER_API_KEY || '2e28a9be1c50b694b288c3a5
 let qrCodeBase64 = '';
 let isReady = false;
 
-// Cliente WhatsApp con Puppeteer optimizado
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
     puppeteer: {
@@ -39,39 +38,31 @@ const client = new Client({
         args: [
             '--no-sandbox', 
             '--disable-setuid-sandbox', 
-            '--disable-dev-shm-usage',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process'
+            '--disable-dev-shm-usage'
         ]
     }
 });
 
-// --- LÓGICA DE RESOLUCIÓN DE ID (SOLUCIÓN COLOMBIA) ---
+/**
+ * LÓGICA DE RESOLUCIÓN DE ID (SOLUCIÓN COLOMBIA)
+ * WhatsApp exige un "9" adicional después del 57 para números móviles en Colombia.
+ */
 async function resolveWAId(number) {
     let clean = number.toString().replace(/\D/g, '');
-    console.log(`[Nova] Intentando resolver ID para: ${clean}`);
+    console.log(`[Nova] Resolviendo identidad para: ${clean}`);
 
     // Intento 1: Validación oficial directa
     const idDirect = await client.getNumberId(clean);
-    if (idDirect) {
-        console.log(`[Nova] ID Directo encontrado: ${idDirect._serialized}`);
-        return idDirect._serialized;
-    }
+    if (idDirect) return idDirect._serialized;
 
     // Intento 2: Ajuste técnico Colombia (Prefijo 579 para móviles)
     if (clean.startsWith('573') && clean.length === 12) {
         const withNine = '579' + clean.substring(2);
         const idWithNine = await client.getNumberId(withNine);
-        if (idWithNine) {
-            console.log(`[Nova] ID Técnico Colombia (579) encontrado: ${idWithNine._serialized}`);
-            return idWithNine._serialized;
-        }
-        // Fallback forzado si falla validación técnica
+        if (idWithNine) return idWithNine._serialized;
         return `${withNine}@c.us`;
     }
 
-    // Intento 3: Fallback manual estándar
     return `${clean}@c.us`;
 }
 
@@ -123,7 +114,7 @@ async function generateServiceCard(data) {
                     <div class="value">Placa: ${data.placa} / ${data.conductor}</div>
                 </div>
             </div>
-            <div class="footer">Este es un comprobante digital generado por Nova v3.5</div>
+            <div class="footer">Este es un comprobante digital generado por Nova v3.6</div>
         </div>
     </body>
     </html>
@@ -136,7 +127,7 @@ async function generateServiceCard(data) {
     return buffer.toString('base64');
 }
 
-// --- EVENTOS DEL CLIENTE ---
+// EVENTOS DEL CLIENTE
 client.on('qr', (qr) => {
     qrcode.toDataURL(qr, (err, url) => {
         qrCodeBase64 = url;
@@ -150,7 +141,7 @@ client.on('ready', () => {
     console.log('[Nova] Sistema operando correctamente.');
 });
 
-// --- ENDPOINTS ---
+// ENDPOINTS
 app.get('/status', (req, res) => res.json({ connected: isReady }));
 
 app.get('/qr', (req, res) => {
@@ -175,7 +166,7 @@ app.post('/send-service-notification', async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error('[Nova] Error de envío:', error);
-        res.status(500).json({ error: 'Fallo al localizar el número en WhatsApp. Verifique el formato.' });
+        res.status(500).json({ error: 'Fallo al localizar el número en WhatsApp.' });
     }
 });
 
@@ -202,7 +193,7 @@ app.post('/send-departure-notification', async (req, res) => {
     }
 });
 
-// --- CRON JOB: ESCANEO DE SERVICIOS ---
+// CRON JOB: ESCANEO DE SERVICIOS
 cron.schedule('* * * * *', async () => {
     if (!isReady) return;
     const now = new Date();
@@ -216,8 +207,6 @@ cron.schedule('* * * * *', async () => {
 
     snapshot.forEach(async (doc) => {
         const s = doc.data();
-        console.log(`[Cron] Alerta para servicio ${s.consecutivo}`);
-        
         try {
             const jid = await resolveWAId(s.telefonoCliente);
             await client.sendMessage(jid, `🚨 *NOTIFICACIÓN AUTOMÁTICA:* Su servicio *${s.consecutivo}* está próximo a iniciar (en 10 minutos). El vehículo *${s.vehiculoPlaca}* está en camino.`);
