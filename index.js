@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 3.5.0 (Resolución de ID Colombia + Puppeteer + Clima + Cron)
+ * Versión: 3.7.0 (Sincronización de ID + Tarjetas HD + Clima + Cron)
  */
 
 const express = require('express');
@@ -35,27 +35,21 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--no-first-run','--no-zygote','--single-process']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
 });
 
-async function resolveWAId(number) {
+function resolveWAId(number) {
     let clean = number.toString().replace(/\D/g, '');
     if (!clean.startsWith('57')) clean = '57' + clean;
-    console.log(`[Nova] Resolviendo ID para: ${clean}`);
-    const idDirect = await client.getNumberId(clean);
-    if (idDirect) return idDirect._serialized;
-    if (clean.startsWith('573') && clean.length === 12) {
-        const withNine = '579' + clean.substring(2);
-        const idWithNine = await client.getNumberId(withNine);
-        if (idWithNine) return idWithNine._serialized;
-        return `${withNine}@c.us`;
-    }
     return `${clean}@c.us`;
 }
 
 async function generateServiceCard(data) {
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
     const page = await browser.newPage();
     const html = `<html><head><style>
         body{font-family:Arial,sans-serif;margin:0;background:#f4f6f8;width:600px;}
@@ -150,7 +144,7 @@ app.post('/send-service-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
     try {
-        const jid = await resolveWAId(data.clienteTelefono);
+        const jid = resolveWAId(data.clienteTelefono);
         const text = `¡Hola, *${data.clienteNombre}*! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nTu servicio ha sido programado exitosamente:\n\n━━━━━━━━━━━━━━━━\n🗓️ *Fecha:* ${data.fecha}\n⏰ *Hora:* ${data.hora}\n📍 *Origen:* ${data.origen}\n🏁 *Destino:* ${data.destino}\n🚗 *Placa:* ${data.placa}\n👤 *Conductor:* ${data.conductor}\n📞 *Contacto:* ${data.telefonoConductor}\n━━━━━━━━━━━━━━━━\n\nPor favor estar listo 10 minutos antes. 🙏\n\n¡Gracias por elegirnos! 🌟\n*Transportes Especiales J&J*`;
         await client.sendMessage(jid, text);
         const img = await generateServiceCard(data);
@@ -167,7 +161,8 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
     try {
-        const jid = await resolveWAId(data.clienteTelefono);
+        const jid = resolveWAId(data.clienteTelefono);
+
         let duracion = 'N/A', distancia = 'N/A';
         try {
             const mapsRes = await fetch(`https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(data.origen)}&destination=${encodeURIComponent(data.destino)}&language=es&departure_time=now&key=${MAPS_KEY}`);
@@ -190,7 +185,7 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
             const climaMain = wData.weather[0].main;
             if (['Rain','Drizzle','Thunderstorm'].includes(climaMain)) recomendacion = '🌂 *Recomendación:* Hay probabilidad de lluvia. Te sugerimos llevar paraguas o impermeable.';
             else if (temperatura < 14) recomendacion = '🧥 *Recomendación:* Hace frío en el destino. Te sugerimos llevar abrigo o chaqueta.';
-            else if (temperatura > 24) recomendacion = '☀️ *Recomendación:* Hace calor en el destino. Te sugerimos ropa ligera y protector solar.';
+            else if (temperatura > 24) recomendacion = '☀️ *Recomendación:* Hace calor. Te sugerimos ropa ligera y protector solar.';
             else recomendacion = '✅ *Recomendación:* El clima está agradable. ¡Disfruta tu viaje!';
         } catch(e) { console.error('[Nova] Weather error:', e); }
 
@@ -218,7 +213,7 @@ cron.schedule('* * * * *', async () => {
             const horaRecogida = s.horaRecogidaTimestamp.toDate();
             const diff = Math.abs(now - horaRecogida) / 60000;
             if (diff <= 1) {
-                console.log(`[Cron] Enviando notificación para: ${s.clienteNombre || s.cliente}`);
+                console.log(`[Cron] Enviando para: ${s.clienteNombre || s.cliente}`);
                 try {
                     await fetch(`http://localhost:${port}/send-departure-notification`, {
                         method: 'POST',
