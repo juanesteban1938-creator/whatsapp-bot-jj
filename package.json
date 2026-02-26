@@ -10,6 +10,9 @@
     "express": "latest",
     "qrcode": "latest",
     "cors": "latest",
-    "puppeteer": "latest"
+    "puppeteer": "latest",
+    "node-cron": "latest",
+    "node-fetch": "2.6.9",
+    "firebase-admin": "latest"
   }
 }
