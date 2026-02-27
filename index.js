@@ -32,7 +32,7 @@ let qrCodeBase64 = '';
 let isReady = false;
 
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '/tmp/.wwebjs_auth'
+    authStrategy: new LocalAuth({ dataPath: '/tmp/.wwebjs_auth' }),
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
