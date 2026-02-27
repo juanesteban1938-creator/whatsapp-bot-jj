@@ -6,13 +6,13 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "whatsapp-web.js": "latest",
-    "express": "latest",
-    "qrcode": "latest",
-    "cors": "latest",
-    "puppeteer": "latest",
-    "node-cron": "latest",
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js",
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
+    "cors": "^2.8.5",
+    "puppeteer": "^21.0.0",
+    "node-cron": "^3.0.3",
     "node-fetch": "2.6.9",
-    "firebase-admin": "latest"
+    "firebase-admin": "^12.0.0"
   }
 }
