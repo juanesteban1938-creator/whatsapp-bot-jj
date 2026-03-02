@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 4.5.0 (Optimización Cron + Timezone UTC-5)
+ * Versión: 5.0.0
  */
 
 const express = require('express');
@@ -39,22 +39,12 @@ const client = new Client({
     }
 });
 
-async function resolveWAId(number) {
-    if (!number) throw new Error('Teléfono no proporcionado');
-    let clean = String(number).replace(/\D/g, '');
+function formatPhone(phone) {
+    if (phone === null || phone === undefined) return null;
+    let clean = String(phone).replace(/\D/g, '');
+    if (clean.length < 7) return null;
     if (!clean.startsWith('57')) clean = '57' + clean;
-    try {
-        const result = await client.getNumberId(clean);
-        if (result) return result._serialized;
-    } catch(e) {
-        console.log('[Nova] getNumberId falló, usando formato directo');
-    }
-    try {
-        const alt = '579' + clean.substring(2);
-        const result2 = await client.getNumberId(alt);
-        if (result2) return result2._serialized;
-    } catch(e) {}
-    return `${clean}@c.us`;
+    return clean;
 }
 
 async function generateServiceCard(data) {
@@ -67,9 +57,9 @@ async function generateServiceCard(data) {
         const page = await browser.newPage();
         const html = `<html><head><style>
             body{font-family:Arial,sans-serif;margin:0;background:#f4f6f8;width:600px;}
-            .card{width:560px;margin:20px;border-radius:16px;background:white;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1);border:1px solid #e1e4e8;}
+            .card{width:560px;margin:20px;border-radius:16px;background:white;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
             .header{background:#1a5fa8;padding:24px;display:flex;align-items:center;justify-content:space-between;color:white;}
-            .header-title{font-size:20px;font-weight:bold;letter-spacing:1px;}
+            .header-title{font-size:20px;font-weight:bold;}
             .header-sub{font-size:11px;opacity:0.8;margin-top:4px;text-transform:uppercase;}
             .logo-box{background:white;border-radius:8px;padding:6px 12px;display:flex;align-items:center;gap:6px;}
             .logo-jj{background:#1a5fa8;color:white;font-weight:900;font-size:14px;padding:4px 8px;border-radius:4px;}
@@ -79,8 +69,8 @@ async function generateServiceCard(data) {
             .label{font-size:10px;color:#888;text-transform:uppercase;font-weight:bold;margin-bottom:3px;}
             .value{font-size:14px;font-weight:bold;color:#333;}
             .route-box{grid-column:span 2;background:#f8f9fa;padding:14px;border-radius:10px;border-left:4px solid #1a5fa8;}
-            .route-item{display:flex;align-items:center;margin-bottom:8px;font-size:13px;color:#333;}
-            .dot{width:10px;height:10px;border-radius:50%;margin-right:10px;flex-shrink:0;}
+            .route-item{display:flex;align-items:center;margin-bottom:8px;font-size:13px;}
+            .dot{width:10px;height:10px;border-radius:50%;margin-right:10px;}
             .footer{background:#f8f9fa;padding:12px;text-align:center;color:#1a5fa8;font-size:11px;border-top:1px solid #eee;font-weight:bold;}
         </style></head><body>
             <div class="card" id="card">
@@ -97,18 +87,18 @@ async function generateServiceCard(data) {
                 <div class="content">
                     <div class="grid">
                         <div style="grid-column:span 2;">
-                            <div class="label">Cliente / Pasajero</div>
-                            <div class="value" style="font-size:18px;color:#1a5fa8;">${data.clienteNombre}</div>
+                            <div class="label">Cliente</div>
+                            <div class="value" style="font-size:18px;color:#1a5fa8;">${data.clienteNombre || 'N/A'}</div>
                         </div>
-                        <div><div class="label">Fecha</div><div class="value">${data.fecha}</div></div>
-                        <div><div class="label">Hora de Recogida</div><div class="value">${data.hora}</div></div>
+                        <div><div class="label">Fecha</div><div class="value">${data.fecha || 'N/A'}</div></div>
+                        <div><div class="label">Hora</div><div class="value">${data.hora || 'N/A'}</div></div>
                         <div class="route-box">
-                            <div class="route-item"><div class="dot" style="background:#22c55e;"></div><div><b>Origen:</b> ${data.origen}</div></div>
-                            <div class="route-item"><div class="dot" style="background:#ef4444;"></div><div><b>Destino:</b> ${data.destino}</div></div>
+                            <div class="route-item"><div class="dot" style="background:#22c55e;"></div><b>Origen:</b>&nbsp;${data.origen || 'N/A'}</div>
+                            <div class="route-item" style="margin-bottom:0"><div class="dot" style="background:#ef4444;"></div><b>Destino:</b>&nbsp;${data.destino || 'N/A'}</div>
                         </div>
-                        <div><div class="label">Vehículo / Placa</div><div class="value">${data.placa}</div></div>
-                        <div><div class="label">Conductor</div><div class="value">${data.conductor}</div></div>
-                        <div style="grid-column:span 2;"><div class="label">Contacto Conductor</div><div class="value">${data.telefonoConductor}</div></div>
+                        <div><div class="label">Placa</div><div class="value">${data.placa || 'N/A'}</div></div>
+                        <div><div class="label">Conductor</div><div class="value">${data.conductor || 'N/A'}</div></div>
+                        <div style="grid-column:span 2;"><div class="label">Contacto Conductor</div><div class="value">${data.telefonoConductor || 'N/A'}</div></div>
                     </div>
                 </div>
                 <div class="footer">Nova | Asistente Virtual de Transportes Especiales J&J</div>
@@ -130,13 +120,13 @@ async function generateServiceCard(data) {
 client.on('qr', (qr) => {
     qrcode.toDataURL(qr, (err, url) => { if (!err) qrCodeBase64 = url; });
     isReady = false;
-    console.log('[Nova] Nuevo QR generado.');
+    console.log('[Nova] QR generado.');
 });
 
 client.on('ready', () => {
     isReady = true;
     qrCodeBase64 = '';
-    console.log('[Nova] Sistema operando correctamente.');
+    console.log('[Nova] Sistema listo.');
 });
 
 client.on('disconnected', (reason) => {
@@ -154,23 +144,34 @@ app.get('/status', (req, res) => res.json({ connected: isReady }));
 
 app.get('/qr', (req, res) => {
     if (isReady) return res.json({ connected: true });
-    if (!qrCodeBase64) return res.status(404).json({ error: 'QR no disponible aún' });
+    if (!qrCodeBase64) return res.status(404).json({ error: 'QR no disponible' });
     res.json({ qr: qrCodeBase64 });
 });
 
 app.post('/send-service-notification', authMiddleware, async (req, res) => {
     const data = req.body;
+    console.log('[Nova] Recibido:', JSON.stringify(data));
+    
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
+    
+    const phone = formatPhone(data.clienteTelefono);
+    if (!phone) return res.status(400).json({ error: 'Teléfono inválido: ' + data.clienteTelefono });
+    
     try {
-        const jid = resolveWAId(data.clienteTelefono);
-        const text = `¡Hola, *${data.clienteNombre}*! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nTu servicio ha sido programado exitosamente:\n\n━━━━━━━━━━━━━━━━\n🗓️ *Fecha:* ${data.fecha}\n⏰ *Hora:* ${data.hora}\n📍 *Origen:* ${data.origen}\n🏁 *Destino:* ${data.destino}\n🚗 *Placa:* ${data.placa}\n👤 *Conductor:* ${data.conductor}\n📞 *Contacto:* ${data.telefonoConductor}\n━━━━━━━━━━━━━━━━\n\nPor favor estar listo 10 minutos antes. 🙏\n\n¡Gracias por elegirnos! 🌟\n*Transportes Especiales J&J*`;
+        const jid = phone + '@c.us';
+        console.log('[Nova] Enviando a:', jid);
+        
+        const text = `¡Hola, *${data.clienteNombre}*! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nTu servicio ha sido programado:\n\n━━━━━━━━━━━━━━━━\n🗓️ *Fecha:* ${data.fecha}\n⏰ *Hora:* ${data.hora}\n📍 *Origen:* ${data.origen}\n🏁 *Destino:* ${data.destino}\n🚗 *Placa:* ${data.placa}\n👤 *Conductor:* ${data.conductor}\n📞 *Contacto:* ${data.telefonoConductor}\n━━━━━━━━━━━━━━━━\n\nPor favor estar listo 10 minutos antes. 🙏\n\n¡Gracias por elegirnos! 🌟\n*Transportes Especiales J&J*`;
+        
         await client.sendMessage(jid, text);
+        
         const img = await generateServiceCard(data);
-        const media = new MessageMedia('image/png', img, 'resumen_servicio.png');
+        const media = new MessageMedia('image/png', img, 'resumen.png');
         await client.sendMessage(jid, media);
+        
         res.json({ success: true });
     } catch (error) {
-        console.error('[Nova] Error:', error);
+        console.error('[Nova] Error:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
@@ -178,8 +179,12 @@ app.post('/send-service-notification', authMiddleware, async (req, res) => {
 app.post('/send-departure-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
+    
+    const phone = formatPhone(data.clienteTelefono);
+    if (!phone) return res.status(400).json({ error: 'Teléfono inválido' });
+    
     try {
-        const jid = resolveWAId(data.clienteTelefono);
+        const jid = phone + '@c.us';
 
         let duracion = 'N/A', distancia = 'N/A';
         try {
@@ -190,7 +195,7 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
                 duracion = leg.duration_in_traffic?.text || leg.duration.text;
                 distancia = leg.distance.text;
             }
-        } catch(e) { console.error('[Nova] Maps error:', e); }
+        } catch(e) { console.error('[Nova] Maps error:', e.message); }
 
         let temperatura = 'N/A', sensacion = 'N/A', descripcion = 'N/A', humedad = 'N/A', recomendacion = '';
         try {
@@ -201,17 +206,17 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
             descripcion = wData.weather[0].description;
             humedad = wData.main.humidity;
             const climaMain = wData.weather[0].main;
-            if (['Rain','Drizzle','Thunderstorm'].includes(climaMain)) recomendacion = '🌂 *Recomendación:* Hay probabilidad de lluvia. Te sugerimos llevar paraguas o impermeable.';
-            else if (temperatura < 14) recomendacion = '🧥 *Recomendación:* Hace frío. Te sugerimos llevar abrigo o chaqueta.';
-            else if (temperatura > 24) recomendacion = '☀️ *Recomendación:* Hace calor. Te sugerimos ropa ligera y protector solar.';
+            if (['Rain','Drizzle','Thunderstorm'].includes(climaMain)) recomendacion = '🌂 *Recomendación:* Lleva paraguas o impermeable.';
+            else if (temperatura < 14) recomendacion = '🧥 *Recomendación:* Lleva abrigo o chaqueta.';
+            else if (temperatura > 24) recomendacion = '☀️ *Recomendación:* Ropa ligera y protector solar.';
             else recomendacion = '✅ *Recomendación:* El clima está agradable. ¡Disfruta tu viaje!';
-        } catch(e) { console.error('[Nova] Weather error:', e); }
+        } catch(e) { console.error('[Nova] Weather error:', e.message); }
 
-        const text = `🚐 *¡Es hora de tu servicio!*\n\nHola *${data.clienteNombre}*, soy *Nova* de *Transportes Especiales J&J* 👋\n\nTu conductor ya está en camino. Información en tiempo real:\n\n━━━━━━━━━━━━━━━━\n🗺️ *Distancia:* ${distancia}\n⏱️ *Tiempo estimado:* ${duracion} (con tráfico actual)\n━━━━━━━━━━━━━━━━\n\n🌤️ *Clima en tu destino:*\n🌡️ Temperatura: ${temperatura}°C (sensación ${sensacion}°C)\n💧 Humedad: ${humedad}%\n☁️ Condición: ${descripcion}\n\n${recomendacion}\n\n━━━━━━━━━━━━━━━━\nPor favor estar listo en el punto de recogida. 🙏\n\n¡Buen viaje! 🌟\n*Transportes Especiales J&J*`;
+        const text = `🚐 *¡Es hora de tu servicio!*\n\nHola *${data.clienteNombre}*, soy *Nova* de *Transportes Especiales J&J* 👋\n\nTu conductor ya está en camino:\n\n━━━━━━━━━━━━━━━━\n🗺️ *Distancia:* ${distancia}\n⏱️ *Tiempo estimado:* ${duracion}\n━━━━━━━━━━━━━━━━\n\n🌤️ *Clima en tu destino:*\n🌡️ ${temperatura}°C (sensación ${sensacion}°C)\n💧 Humedad: ${humedad}%\n☁️ ${descripcion}\n\n${recomendacion}\n\n¡Buen viaje! 🌟\n*Transportes Especiales J&J*`;
         await client.sendMessage(jid, text);
         res.json({ success: true });
     } catch (error) {
-        console.error('[Nova] Error:', error);
+        console.error('[Nova] Error:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
@@ -219,7 +224,6 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
 cron.schedule('* * * * *', async () => {
     if (!isReady) return;
     const now = new Date();
-    console.log(`[Cron] Revisando: ${now.toISOString()}`);
     try {
         const snapshot = await db.collection('servicios')
             .where('estado', 'in', ['Programado', 'programado'])
@@ -228,41 +232,33 @@ cron.schedule('* * * * *', async () => {
 
         for (const doc of snapshot.docs) {
             const s = doc.data();
-            if (!s.horaRecogidaTimestamp) {
-                console.log(`[Cron] Sin timestamp: ${s.consecutivo}`);
-                continue;
-            }
+            if (!s.horaRecogidaTimestamp) continue;
             const horaRecogida = s.horaRecogidaTimestamp.toDate();
-            const diffMs = now - horaRecogida;
-            const diffMin = diffMs / 60000;
-            console.log(`[Cron] Servicio ${s.consecutivo}: diff=${diffMin.toFixed(2)} min, hora=${horaRecogida.toISOString()}`);
-
+            const diffMin = (now - horaRecogida) / 60000;
+            console.log(`[Cron] ${s.consecutivo}: diff=${diffMin.toFixed(2)}min`);
             if (diffMin >= 0 && diffMin <= 2) {
-                console.log(`[Cron] ¡Disparando para ${s.consecutivo}!`);
+                const phone = formatPhone(s.telefonoCliente || s.clienteTelefono);
+                if (!phone) { console.error('[Cron] Sin teléfono para', s.consecutivo); continue; }
                 try {
                     await fetch(`http://localhost:${port}/send-departure-notification`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
                         body: JSON.stringify({
-                            clienteTelefono: s.telefonoCliente || s.clienteTelefono,
+                            clienteTelefono: phone,
                             clienteNombre: s.clienteNombre || s.cliente,
                             origen: s.origen,
                             destino: s.destino
                         })
                     });
                     await doc.ref.update({ notificacionSalidaEnviada: true });
-                    console.log(`[Cron] ✅ Enviado y marcado.`);
-                } catch(e) {
-                    console.error(`[Cron] Error:`, e.message);
-                }
+                    console.log(`[Cron] ✅ Enviado para ${s.consecutivo}`);
+                } catch(e) { console.error(`[Cron] Error:`, e.message); }
             }
         }
-    } catch (error) {
-        console.error('[Cron] Error general:', error.message);
-    }
+    } catch (error) { console.error('[Cron] Error:', error.message); }
 });
 
 app.listen(port, '0.0.0.0', () => {
     console.log(`[Nova] Servidor activo en puerto ${port}`);
-    client.initialize().catch(err => console.error('[Nova] Error de inicialización:', err));
+    client.initialize().catch(err => console.error('[Nova] Error:', err));
 });
