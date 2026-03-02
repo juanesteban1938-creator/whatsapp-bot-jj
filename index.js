@@ -39,9 +39,20 @@ const client = new Client({
     }
 });
 
-function resolveWAId(number) {
+async function resolveWAId(number) {
     let clean = number.toString().replace(/\D/g, '');
     if (!clean.startsWith('57')) clean = '57' + clean;
+    try {
+        const result = await client.getNumberId(clean);
+        if (result) return result._serialized;
+    } catch(e) {
+        console.log('[Nova] getNumberId falló, usando formato directo');
+    }
+    try {
+        const alt = '579' + clean.substring(2);
+        const result2 = await client.getNumberId(alt);
+        if (result2) return result2._serialized;
+    } catch(e) {}
     return `${clean}@c.us`;
 }
 
