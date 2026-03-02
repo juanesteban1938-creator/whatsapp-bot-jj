@@ -40,7 +40,8 @@ const client = new Client({
 });
 
 async function resolveWAId(number) {
-    let clean = number.toString().replace(/\D/g, '');
+    if (!number) throw new Error('Teléfono no proporcionado');
+    let clean = String(number).replace(/\D/g, '');
     if (!clean.startsWith('57')) clean = '57' + clean;
     try {
         const result = await client.getNumberId(clean);
