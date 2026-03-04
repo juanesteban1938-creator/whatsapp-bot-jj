@@ -1,16 +1,17 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 5.0.0
+ * Versión: 6.0.0 (Baileys - Sin Puppeteer)
  */
 
 const express = require('express');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
 const admin = require('firebase-admin');
 const cron = require('node-cron');
 const fetch = require('node-fetch');
+const pino = require('pino');
 
 if (!admin.apps.length) {
     admin.initializeApp({
@@ -28,155 +29,66 @@ const API_KEY = process.env.API_KEY || 'jj-connect-2026';
 const WEATHER_KEY = process.env.OPENWEATHER_API_KEY;
 const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-let qrCodeBase64 = '';
+let sock = null;
 let isReady = false;
-
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '/app/.wwebjs_auth' }),
-    webVersionCache: { type: 'none' },
-
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox', 
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu',
-            '--single-process'
-        ]
-    }
-});
+let qrCodeBase64 = '';
 
 function formatPhone(phone) {
-    if (phone === null || phone === undefined) return null;
+    if (!phone) return null;
     let clean = String(phone).replace(/\D/g, '');
     if (clean.length < 7) return null;
     if (!clean.startsWith('57')) clean = '57' + clean;
-    return clean;
+    return clean + '@s.whatsapp.net';
 }
 
-async function generateServiceCard(data) {
-    let browser;
-    try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        const page = await browser.newPage();
-        const html = `<html><head><style>
-            body{font-family:Arial,sans-serif;margin:0;background:#f4f6f8;width:600px;}
-            .card{width:560px;margin:20px;border-radius:16px;background:white;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
-            .header{background:#1a5fa8;padding:24px;display:flex;align-items:center;justify-content:space-between;color:white;}
-            .header-title{font-size:20px;font-weight:bold;}
-            .header-sub{font-size:11px;opacity:0.8;margin-top:4px;text-transform:uppercase;}
-            .logo-box{background:white;border-radius:8px;padding:6px 12px;display:flex;align-items:center;gap:6px;}
-            .logo-jj{background:#1a5fa8;color:white;font-weight:900;font-size:14px;padding:4px 8px;border-radius:4px;}
-            .logo-text{color:#1a5fa8;font-weight:700;font-size:13px;}
-            .content{padding:28px;}
-            .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
-            .label{font-size:10px;color:#888;text-transform:uppercase;font-weight:bold;margin-bottom:3px;}
-            .value{font-size:14px;font-weight:bold;color:#333;}
-            .route-box{grid-column:span 2;background:#f8f9fa;padding:14px;border-radius:10px;border-left:4px solid #1a5fa8;}
-            .route-item{display:flex;align-items:center;margin-bottom:8px;font-size:13px;}
-            .dot{width:10px;height:10px;border-radius:50%;margin-right:10px;}
-            .footer{background:#f8f9fa;padding:12px;text-align:center;color:#1a5fa8;font-size:11px;border-top:1px solid #eee;font-weight:bold;}
-        </style></head><body>
-            <div class="card" id="card">
-                <div class="header">
-                    <div>
-                        <div class="header-title">RESUMEN DEL SERVICIO</div>
-                        <div class="header-sub">Transportes Especiales J&J</div>
-                    </div>
-                    <div class="logo-box">
-                        <div class="logo-jj">J&J</div>
-                        <span class="logo-text">Connect</span>
-                    </div>
-                </div>
-                <div class="content">
-                    <div class="grid">
-                        <div style="grid-column:span 2;">
-                            <div class="label">Cliente</div>
-                            <div class="value" style="font-size:18px;color:#1a5fa8;">${data.clienteNombre || 'N/A'}</div>
-                        </div>
-                        <div><div class="label">Fecha</div><div class="value">${data.fecha || 'N/A'}</div></div>
-                        <div><div class="label">Hora</div><div class="value">${data.hora || 'N/A'}</div></div>
-                        <div class="route-box">
-                            <div class="route-item"><div class="dot" style="background:#22c55e;"></div><b>Origen:</b>&nbsp;${data.origen || 'N/A'}</div>
-                            <div class="route-item" style="margin-bottom:0"><div class="dot" style="background:#ef4444;"></div><b>Destino:</b>&nbsp;${data.destino || 'N/A'}</div>
-                        </div>
-                        <div><div class="label">Placa</div><div class="value">${data.placa || 'N/A'}</div></div>
-                        <div><div class="label">Conductor</div><div class="value">${data.conductor || 'N/A'}</div></div>
-                        <div style="grid-column:span 2;"><div class="label">Contacto Conductor</div><div class="value">${data.telefonoConductor || 'N/A'}</div></div>
-                    </div>
-                </div>
-                <div class="footer">Nova | Asistente Virtual de Transportes Especiales J&J</div>
-            </div>
-        </body></html>`;
-        await page.setViewport({ width: 600, height: 700, deviceScaleFactor: 2 });
-        await page.setContent(html);
-        await new Promise(r => setTimeout(r, 300));
-        const card = await page.$('#card');
-        const screenshot = await card.screenshot({ encoding: 'base64' });
-        await browser.close();
-        return screenshot;
-    } catch (err) {
-        if (browser) await browser.close();
-        throw err;
-    }
+async function connectToWhatsApp() {
+    const { state, saveCreds } = await useMultiFileAuthState('/app/.baileys_auth');
+    const { version } = await fetchLatestBaileysVersion();
+
+    sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        logger: pino({ level: 'silent' }),
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            qrCodeBase64 = await qrcode.toDataURL(qr);
+            isReady = false;
+            console.log('[Nova] QR generado - esperando escaneo...');
+        }
+
+        if (connection === 'close') {
+            isReady = false;
+            const shouldReconnect = (lastDisconnect?.error instanceof Boom)
+                ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
+                : true;
+            console.log('[Nova] Desconectado. Reconectando:', shouldReconnect);
+            if (shouldReconnect) {
+                setTimeout(connectToWhatsApp, 3000);
+            }
+        }
+
+        if (connection === 'open') {
+            isReady = true;
+            qrCodeBase64 = '';
+            console.log('[Nova] ✅ Sistema listo y conectado.');
+        }
+    });
 }
-
-client.on('qr', (qr) => {
-    qrcode.toDataURL(qr, (err, url) => { if (!err) qrCodeBase64 = url; });
-    isReady = false;
-    console.log('[Nova] QR generado - esperando escaneo...');
-});
-
-client.on('loading_screen', (percent, message) => {
-    console.log('[Nova] Cargando:', percent, message);
-});
-
-client.on('authenticated', () => {
-    console.log('[Nova] ✅ Autenticado correctamente');
-});
-
-client.on('auth_failure', (msg) => {
-    console.error('[Nova] ❌ Error de autenticación:', msg);
-});
-
-client.on('ready', () => {
-    isReady = true;
-    qrCodeBase64 = '';
-    console.log('[Nova] ✅ Sistema listo y conectado.');
-});
-
-client.on('disconnected', (reason) => {
-    console.log('[Nova] Desconectado:', reason);
-    isReady = false;
-    client.initialize().catch(err => console.error(err));
-});
-
-client.on('ready', () => {
-    isReady = true;
-    qrCodeBase64 = '';
-    console.log('[Nova] Sistema listo.');
-});
-
-client.on('disconnected', (reason) => {
-    console.log('[Nova] Desconectado:', reason);
-    isReady = false;
-    client.initialize().catch(err => console.error(err));
-});
 
 const authMiddleware = (req, res, next) => {
     if (API_KEY && req.headers['x-api-key'] !== API_KEY) return res.status(401).json({ error: 'No autorizado.' });
     next();
 };
 
-app.get('/status', (req, res) => res.json({ connected: isReady }));
 app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/status', (req, res) => res.json({ connected: isReady }));
 
 app.get('/qr', (req, res) => {
     if (isReady) return res.json({ connected: true });
@@ -186,25 +98,16 @@ app.get('/qr', (req, res) => {
 
 app.post('/send-service-notification', authMiddleware, async (req, res) => {
     const data = req.body;
-    console.log('[Nova] Recibido:', JSON.stringify(data));
-    
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
-    
-    const phone = formatPhone(data.clienteTelefono);
-    if (!phone) return res.status(400).json({ error: 'Teléfono inválido: ' + data.clienteTelefono });
-    
+
+    const jid = formatPhone(data.clienteTelefono);
+    if (!jid) return res.status(400).json({ error: 'Teléfono inválido' });
+
     try {
-        const jid = phone + '@c.us';
-        console.log('[Nova] Enviando a:', jid);
-        
         const text = `¡Hola, *${data.clienteNombre}*! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nTu servicio ha sido programado:\n\n━━━━━━━━━━━━━━━━\n🗓️ *Fecha:* ${data.fecha}\n⏰ *Hora:* ${data.hora}\n📍 *Origen:* ${data.origen}\n🏁 *Destino:* ${data.destino}\n🚗 *Placa:* ${data.placa}\n👤 *Conductor:* ${data.conductor}\n📞 *Contacto:* ${data.telefonoConductor}\n━━━━━━━━━━━━━━━━\n\nPor favor estar listo 10 minutos antes. 🙏\n\n¡Gracias por elegirnos! 🌟\n*Transportes Especiales J&J*`;
-        
-        await client.sendMessage(jid, text);
-        
-        const img = await generateServiceCard(data);
-        const media = new MessageMedia('image/png', img, 'resumen.png');
-        await client.sendMessage(jid, media);
-        
+
+        await sock.sendMessage(jid, { text });
+        console.log('[Nova] ✅ Mensaje enviado a:', jid);
         res.json({ success: true });
     } catch (error) {
         console.error('[Nova] Error:', error.message);
@@ -215,13 +118,11 @@ app.post('/send-service-notification', authMiddleware, async (req, res) => {
 app.post('/send-departure-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
-    
-    const phone = formatPhone(data.clienteTelefono);
-    if (!phone) return res.status(400).json({ error: 'Teléfono inválido' });
-    
-    try {
-        const jid = phone + '@c.us';
 
+    const jid = formatPhone(data.clienteTelefono);
+    if (!jid) return res.status(400).json({ error: 'Teléfono inválido' });
+
+    try {
         let duracion = 'N/A', distancia = 'N/A';
         try {
             const mapsRes = await fetch(`https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(data.origen)}&destination=${encodeURIComponent(data.destino)}&language=es&departure_time=now&key=${MAPS_KEY}`);
@@ -249,7 +150,8 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
         } catch(e) { console.error('[Nova] Weather error:', e.message); }
 
         const text = `🚐 *¡Es hora de tu servicio!*\n\nHola *${data.clienteNombre}*, soy *Nova* de *Transportes Especiales J&J* 👋\n\nTu conductor ya está en camino:\n\n━━━━━━━━━━━━━━━━\n🗺️ *Distancia:* ${distancia}\n⏱️ *Tiempo estimado:* ${duracion}\n━━━━━━━━━━━━━━━━\n\n🌤️ *Clima en tu destino:*\n🌡️ ${temperatura}°C (sensación ${sensacion}°C)\n💧 Humedad: ${humedad}%\n☁️ ${descripcion}\n\n${recomendacion}\n\n¡Buen viaje! 🌟\n*Transportes Especiales J&J*`;
-        await client.sendMessage(jid, text);
+
+        await sock.sendMessage(jid, { text });
         res.json({ success: true });
     } catch (error) {
         console.error('[Nova] Error:', error.message);
@@ -271,16 +173,15 @@ cron.schedule('* * * * *', async () => {
             if (!s.horaRecogidaTimestamp) continue;
             const horaRecogida = s.horaRecogidaTimestamp.toDate();
             const diffMin = (now - horaRecogida) / 60000;
-            console.log(`[Cron] ${s.consecutivo}: diff=${diffMin.toFixed(2)}min`);
             if (diffMin >= 0 && diffMin <= 2) {
                 const phone = formatPhone(s.telefonoCliente || s.clienteTelefono);
-                if (!phone) { console.error('[Cron] Sin teléfono para', s.consecutivo); continue; }
+                if (!phone) continue;
                 try {
                     await fetch(`http://localhost:${port}/send-departure-notification`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
                         body: JSON.stringify({
-                            clienteTelefono: phone,
+                            clienteTelefono: String(s.telefonoCliente || s.clienteTelefono),
                             clienteNombre: s.clienteNombre || s.cliente,
                             origen: s.origen,
                             destino: s.destino
@@ -296,5 +197,5 @@ cron.schedule('* * * * *', async () => {
 
 app.listen(port, '0.0.0.0', () => {
     console.log(`[Nova] Servidor activo en puerto ${port}`);
-    client.initialize().catch(err => console.error('[Nova] Error:', err));
+    connectToWhatsApp().catch(err => console.error('[Nova] Error:', err));
 });
