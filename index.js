@@ -142,6 +142,7 @@ const authMiddleware = (req, res, next) => {
 };
 
 app.get('/status', (req, res) => res.json({ connected: isReady }));
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 app.get('/qr', (req, res) => {
     if (isReady) return res.json({ connected: true });
