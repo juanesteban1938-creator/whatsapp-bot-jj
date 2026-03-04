@@ -14,8 +14,9 @@ const fetch = require('node-fetch');
 const pino = require('pino');
 
 if (!admin.apps.length) {
+    const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
     admin.initializeApp({
-        projectId: process.env.FIREBASE_PROJECT_ID || 'jj-connect-18988325-5ab9e'
+        credential: admin.credential.cert(serviceAccount)
     });
 }
 const db = admin.firestore();
