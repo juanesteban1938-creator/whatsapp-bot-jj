@@ -145,7 +145,7 @@ app.get('/status', (req, res) => res.json({ connected: isReady }));
 
 app.get('/qr', (req, res) => {
     if (isReady) return res.json({ connected: true });
-    if (!qrCodeBase64) return res.status(404).json({ error: 'QR no disponible' });
+    if (!qrCodeBase64) return res.status(404).json({ error: 'QR no disponible aún' });
     res.json({ qr: qrCodeBase64 });
 });
 
