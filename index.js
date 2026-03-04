@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 6.0.0 (Baileys - Sin Puppeteer)
+ * Versión: 6.1.0 (Baileys + campos en inglés)
  */
 
 const express = require('express');
@@ -14,9 +14,8 @@ const fetch = require('node-fetch');
 const pino = require('pino');
 
 if (!admin.apps.length) {
-    admin.initializeApp({
-        projectId: process.env.FIREBASE_PROJECT_ID || 'jj-connect-18988325-5ab9e'
-    });
+    const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 }
 const db = admin.firestore();
 
@@ -69,9 +68,7 @@ async function connectToWhatsApp() {
                 ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
                 : true;
             console.log('[Nova] Desconectado. Reconectando:', shouldReconnect);
-            if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 3000);
-            }
+            if (shouldReconnect) setTimeout(connectToWhatsApp, 3000);
         }
 
         if (connection === 'open') {
@@ -101,7 +98,7 @@ app.post('/send-service-notification', authMiddleware, async (req, res) => {
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
 
     const jid = formatPhone(data.clienteTelefono);
-    if (!jid) return res.status(400).json({ error: 'Teléfono inválido' });
+    if (!jid) return res.status(400).json({ error: 'Teléfono inválido: ' + data.clienteTelefono });
 
     try {
         const text = `¡Hola, *${data.clienteNombre}*! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nTu servicio ha sido programado:\n\n━━━━━━━━━━━━━━━━\n🗓️ *Fecha:* ${data.fecha}\n⏰ *Hora:* ${data.hora}\n📍 *Origen:* ${data.origen}\n🏁 *Destino:* ${data.destino}\n🚗 *Placa:* ${data.placa}\n👤 *Conductor:* ${data.conductor}\n📞 *Contacto:* ${data.telefonoConductor}\n━━━━━━━━━━━━━━━━\n\nPor favor estar listo 10 minutos antes. 🙏\n\n¡Gracias por elegirnos! 🌟\n*Transportes Especiales J&J*`;
@@ -162,33 +159,51 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
 cron.schedule('* * * * *', async () => {
     if (!isReady) return;
     const now = new Date();
+    console.log(`[Cron] Revisando servicios: ${now.toISOString()}`);
     try {
         const snapshot = await db.collection('services')
-            .where('estado', 'in', ['Programado', 'programado', 'scheduled'])
+            .where('status', 'in', ['Programado', 'programado', 'scheduled', 'Scheduled'])
             .where('notificacionSalidaEnviada', '==', false)
             .get();
 
-        for (const doc of snapshot.docs) {
-            const s = doc.data();
-            if (!s.horaRecogidaTimestamp) continue;
-            const horaRecogida = s.horaRecogidaTimestamp.toDate();
+        console.log(`[Cron] Servicios encontrados: ${snapshot.docs.length}`);
+
+        for (const docSnap of snapshot.docs) {
+            const s = docSnap.data();
+
+            // Construir fecha/hora desde pickupDate + pickupTime
+            let horaRecogida = null;
+            if (s.pickupDate && s.pickupTime) {
+                try {
+                    horaRecogida = new Date(`${s.pickupDate}T${s.pickupTime}:00-05:00`);
+                } catch(e) { console.error('[Cron] Error fecha:', e.message); continue; }
+            } else if (s.horaRecogidaTimestamp) {
+                horaRecogida = s.horaRecogidaTimestamp.toDate();
+            } else {
+                console.log(`[Cron] Sin hora para: ${docSnap.id}`);
+                continue;
+            }
+
             const diffMin = (now - horaRecogida) / 60000;
+            console.log(`[Cron] ${docSnap.id}: diff=${diffMin.toFixed(2)}min, hora=${horaRecogida.toISOString()}`);
+
             if (diffMin >= 0 && diffMin <= 2) {
-                const phone = formatPhone(s.telefonoCliente || s.clienteTelefono);
-                if (!phone) continue;
+                const phone = formatPhone(s.contactNumber || s.telefonoCliente || s.clienteTelefono);
+                if (!phone) { console.error('[Cron] Sin teléfono para', docSnap.id); continue; }
+
                 try {
                     await fetch(`http://localhost:${port}/send-departure-notification`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
                         body: JSON.stringify({
-                            clienteTelefono: String(s.telefonoCliente || s.clienteTelefono),
-                            clienteNombre: s.clienteNombre || s.cliente,
-                            origen: s.origen,
-                            destino: s.destino
+                            clienteTelefono: String(s.contactNumber || s.telefonoCliente),
+                            clienteNombre: s.clientName || s.clienteNombre || s.cliente,
+                            origen: s.pickupAddress || s.origen,
+                            destino: s.destinationAddress || s.destino
                         })
                     });
-                    await doc.ref.update({ notificacionSalidaEnviada: true });
-                    console.log(`[Cron] ✅ Enviado para ${s.consecutivo}`);
+                    await docSnap.ref.update({ notificacionSalidaEnviada: true });
+                    console.log(`[Cron] ✅ Enviado para ${docSnap.id}`);
                 } catch(e) { console.error(`[Cron] Error:`, e.message); }
             }
         }
