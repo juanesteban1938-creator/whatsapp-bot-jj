@@ -34,7 +34,7 @@ let isReady = false;
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '/app/.wwebjs_auth' }),
     webVersionCache: { type: 'none' },
-    webVersion: '2.2412.54',
+
     puppeteer: {
         headless: true,
         args: [
