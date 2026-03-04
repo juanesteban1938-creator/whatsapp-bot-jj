@@ -14,9 +14,8 @@ const fetch = require('node-fetch');
 const pino = require('pino');
 
 if (!admin.apps.length) {
-    const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
     admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
+        projectId: process.env.FIREBASE_PROJECT_ID || 'jj-connect-18988325-5ab9e'
     });
 }
 const db = admin.firestore();
@@ -165,7 +164,7 @@ cron.schedule('* * * * *', async () => {
     const now = new Date();
     try {
         const snapshot = await db.collection('services')
-            .where('estado', 'in', ['Programado', 'programado'])
+            .where('estado', 'in', ['Programado', 'programado', 'scheduled'])
             .where('notificacionSalidaEnviada', '==', false)
             .get();
 
