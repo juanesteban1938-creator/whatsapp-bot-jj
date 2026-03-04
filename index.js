@@ -121,7 +121,31 @@ async function generateServiceCard(data) {
 client.on('qr', (qr) => {
     qrcode.toDataURL(qr, (err, url) => { if (!err) qrCodeBase64 = url; });
     isReady = false;
-    console.log('[Nova] QR generado.');
+    console.log('[Nova] QR generado - esperando escaneo...');
+});
+
+client.on('loading_screen', (percent, message) => {
+    console.log('[Nova] Cargando:', percent, message);
+});
+
+client.on('authenticated', () => {
+    console.log('[Nova] ✅ Autenticado correctamente');
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('[Nova] ❌ Error de autenticación:', msg);
+});
+
+client.on('ready', () => {
+    isReady = true;
+    qrCodeBase64 = '';
+    console.log('[Nova] ✅ Sistema listo y conectado.');
+});
+
+client.on('disconnected', (reason) => {
+    console.log('[Nova] Desconectado:', reason);
+    isReady = false;
+    client.initialize().catch(err => console.error(err));
 });
 
 client.on('ready', () => {
