@@ -164,7 +164,7 @@ cron.schedule('* * * * *', async () => {
     if (!isReady) return;
     const now = new Date();
     try {
-        const snapshot = await db.collection('servicios')
+        const snapshot = await db.collection('services')
             .where('estado', 'in', ['Programado', 'programado'])
             .where('notificacionSalidaEnviada', '==', false)
             .get();
