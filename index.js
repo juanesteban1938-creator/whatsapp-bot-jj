@@ -230,8 +230,8 @@ cron.schedule('* * * * *', async () => {
                     // fecha es ISO string, hora es "HH:mm"
                     const fechaBase = new Date(s.fecha);
                     const [horas, minutos] = s.hora.split(':').map(Number);
-                    horaRecogida = new Date(fechaBase);
-                    horaRecogida.setHours(horas, minutos, 0, 0);
+const fechaStr = `${s.fecha.substring(0, 10)}T${s.hora}:00-05:00`;
+horaRecogida = new Date(fechaStr);
                 } catch(e) { console.error('[Cron] Error fecha:', e.message); continue; }
             } else {
                 console.log(`[Cron] Sin fecha/hora para: ${docSnap.id}`);
