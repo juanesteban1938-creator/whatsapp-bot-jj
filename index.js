@@ -213,7 +213,7 @@ cron.schedule('* * * * *', async () => {
     console.log(`[Cron] Revisando servicios: ${now.toISOString()}`);
     try {
         const snapshot = await db.collection('services')
-            .where('status', 'in', ['Programado', 'programado', 'scheduled', 'Scheduled'])
+            .where('estado', 'in', ['Programado', 'programado'])
             .where('notificacionSalidaEnviada', '==', false)
             .get();
 
@@ -223,14 +223,18 @@ cron.schedule('* * * * *', async () => {
             const s = docSnap.data();
 
             let horaRecogida = null;
-            if (s.pickupDate && s.pickupTime) {
+
+            // Usar campos fecha + hora que guarda la app
+            if (s.fecha && s.hora) {
                 try {
-                    horaRecogida = new Date(`${s.pickupDate}T${s.pickupTime}:00-05:00`);
+                    // fecha es ISO string, hora es "HH:mm"
+                    const fechaBase = new Date(s.fecha);
+                    const [horas, minutos] = s.hora.split(':').map(Number);
+                    horaRecogida = new Date(fechaBase);
+                    horaRecogida.setHours(horas, minutos, 0, 0);
                 } catch(e) { console.error('[Cron] Error fecha:', e.message); continue; }
-            } else if (s.horaRecogidaTimestamp) {
-                horaRecogida = s.horaRecogidaTimestamp.toDate();
             } else {
-                console.log(`[Cron] Sin hora para: ${docSnap.id}`);
+                console.log(`[Cron] Sin fecha/hora para: ${docSnap.id}`);
                 continue;
             }
 
@@ -238,7 +242,7 @@ cron.schedule('* * * * *', async () => {
             console.log(`[Cron] ${docSnap.id}: diff=${diffMin.toFixed(2)}min, hora=${horaRecogida.toISOString()}`);
 
             if (diffMin >= 0 && diffMin <= 2) {
-                const phone = formatPhone(s.contactNumber || s.telefonoCliente || s.clienteTelefono);
+                const phone = formatPhone(s.telefonoCliente || s.contactNumber);
                 if (!phone) { console.error('[Cron] Sin teléfono para', docSnap.id); continue; }
 
                 try {
@@ -246,10 +250,10 @@ cron.schedule('* * * * *', async () => {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
                         body: JSON.stringify({
-                            clienteTelefono: String(s.contactNumber || s.telefonoCliente),
-                            clienteNombre: s.clientName || s.clienteNombre || s.cliente,
-                            origen: s.pickupAddress || s.origen,
-                            destino: s.destinationAddress || s.destino
+                            clienteTelefono: String(s.telefonoCliente || s.contactNumber),
+                            clienteNombre: s.clienteNombre || s.cliente,
+                            origen: s.origen,
+                            destino: s.destino
                         })
                     });
                     await docSnap.ref.update({ notificacionSalidaEnviada: true });
