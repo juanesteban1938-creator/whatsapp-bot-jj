@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 6.1.0 (Baileys + campos en inglés)
+ * Versión: 6.2.0 (Baileys + historial Firestore)
  */
 
 const express = require('express');
@@ -105,9 +105,34 @@ app.post('/send-service-notification', authMiddleware, async (req, res) => {
 
         await sock.sendMessage(jid, { text });
         console.log('[Nova] ✅ Mensaje enviado a:', jid);
+
+        // Registrar en historial Firestore
+        await db.collection('notificaciones_whatsapp').add({
+            clienteNombre: data.clienteNombre,
+            clienteTelefono: data.clienteTelefono,
+            tipo: 'servicio_programado',
+            mensaje: text,
+            estado: 'enviado',
+            fecha: admin.firestore.FieldValue.serverTimestamp()
+        });
+
         res.json({ success: true });
     } catch (error) {
         console.error('[Nova] Error:', error.message);
+
+        // Registrar error en historial Firestore
+        try {
+            await db.collection('notificaciones_whatsapp').add({
+                clienteNombre: data.clienteNombre,
+                clienteTelefono: data.clienteTelefono,
+                tipo: 'servicio_programado',
+                mensaje: '',
+                estado: 'error',
+                error: error.message,
+                fecha: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } catch(e) { console.error('[Nova] Error guardando log:', e.message); }
+
         res.status(500).json({ error: error.message });
     }
 });
@@ -149,9 +174,35 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
         const text = `🚐 *¡Es hora de tu servicio!*\n\nHola *${data.clienteNombre}*, soy *Nova* de *Transportes Especiales J&J* 👋\n\nTu conductor ya está en camino:\n\n━━━━━━━━━━━━━━━━\n🗺️ *Distancia:* ${distancia}\n⏱️ *Tiempo estimado:* ${duracion}\n━━━━━━━━━━━━━━━━\n\n🌤️ *Clima en tu destino:*\n🌡️ ${temperatura}°C (sensación ${sensacion}°C)\n💧 Humedad: ${humedad}%\n☁️ ${descripcion}\n\n${recomendacion}\n\n¡Buen viaje! 🌟\n*Transportes Especiales J&J*`;
 
         await sock.sendMessage(jid, { text });
+        console.log('[Nova] ✅ Notificación de salida enviada a:', jid);
+
+        // Registrar en historial Firestore
+        await db.collection('notificaciones_whatsapp').add({
+            clienteNombre: data.clienteNombre,
+            clienteTelefono: data.clienteTelefono,
+            tipo: 'notificacion_salida',
+            mensaje: text,
+            estado: 'enviado',
+            fecha: admin.firestore.FieldValue.serverTimestamp()
+        });
+
         res.json({ success: true });
     } catch (error) {
         console.error('[Nova] Error:', error.message);
+
+        // Registrar error en historial Firestore
+        try {
+            await db.collection('notificaciones_whatsapp').add({
+                clienteNombre: data.clienteNombre,
+                clienteTelefono: data.clienteTelefono,
+                tipo: 'notificacion_salida',
+                mensaje: '',
+                estado: 'error',
+                error: error.message,
+                fecha: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } catch(e) { console.error('[Nova] Error guardando log:', e.message); }
+
         res.status(500).json({ error: error.message });
     }
 });
@@ -171,7 +222,6 @@ cron.schedule('* * * * *', async () => {
         for (const docSnap of snapshot.docs) {
             const s = docSnap.data();
 
-            // Construir fecha/hora desde pickupDate + pickupTime
             let horaRecogida = null;
             if (s.pickupDate && s.pickupTime) {
                 try {
