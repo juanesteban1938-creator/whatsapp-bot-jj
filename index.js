@@ -92,8 +92,7 @@ async function connectToWhatsApp() {
             msg.message.extendedTextMessage?.text || ''
         ).trim();
         const texto = textoRaw.toLowerCase();
-        const telefonoConCodigo = jid.replace('@s.whatsapp.net', '');
-const telefono = telefonoConCodigo.replace(/^57/, '');
+        const telefono = jid.replace('@s.whatsapp.net', '').replace(/^57/, '');
 
         console.log(`[Nova] 📩 Mensaje de ${telefono}: ${textoRaw}`);
 
@@ -114,7 +113,7 @@ const telefono = telefonoConCodigo.replace(/^57/, '');
         let nombreCliente = 'Cliente';
         try {
             const snap = await db.collection('services')
-    .where('telefonoCliente', 'in', [telefono, telefonoConCodigo])
+                .where('telefonoCliente', '==', telefono)
                 .orderBy('fecha', 'desc')
                 .limit(1)
                 .get();
@@ -207,6 +206,28 @@ app.get('/qr', (req, res) => {
     if (isReady) return res.json({ connected: true });
     if (!qrCodeBase64) return res.status(404).json({ error: 'QR no disponible aún' });
     res.json({ qr: qrCodeBase64 });
+});
+
+app.post('/send-message', authMiddleware, async (req, res) => {
+    const { jid, mensaje } = req.body;
+    if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
+    if (!jid || !mensaje) return res.status(400).json({ error: 'Faltan datos' });
+    try {
+        await sock.sendMessage(jid, { text: mensaje });
+        await db.collection('conversaciones').add({
+            jid,
+            telefono: jid.replace('@s.whatsapp.net', '').replace(/^57/, ''),
+            nombre: 'Admin J&J',
+            mensaje,
+            tipo: 'saliente',
+            leido: true,
+            fecha: admin.firestore.FieldValue.serverTimestamp()
+        });
+        res.json({ success: true });
+    } catch(error) {
+        console.error('[Nova] Error enviando mensaje manual:', error.message);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 app.post('/send-service-notification', authMiddleware, async (req, res) => {
