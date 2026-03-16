@@ -167,6 +167,14 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
             return;
         }
 
+        // Despedidas y confirmaciones — Nova no responde
+        const esDespedida = texto.includes('gracias') || texto.includes('ok') ||
+            texto === 'listo' || texto === 'perfecto' || texto === 'entendido' ||
+            texto === 'jajaja' || texto === 'jaja' || texto.includes('claro') ||
+            texto === 'genial' || texto === 'excelente' || texto === 'bien' ||
+            texto === '👍' || texto === '😊' || texto === '🙏';
+        if (esDespedida) return;
+
         // Mensaje no reconocido
         await enviar(jid, telefono,
             `¡Hola! 😊 Soy *Nova* de *Transportes Especiales J&J*.\n\nEscríbeme *hola* para cotizar un servicio o consultar:\n📋 *estado* — Ver tu último servicio\n💰 *pago* — Estado de pago\n📞 *contacto* — Información de contacto`
