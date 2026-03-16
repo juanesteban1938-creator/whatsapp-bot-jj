@@ -114,7 +114,7 @@ const telefono = telefonoConCodigo.replace(/^57/, '');
         let nombreCliente = 'Cliente';
         try {
             const snap = await db.collection('services')
-                .where('telefonoCliente', '==', telefono)
+    .where('telefonoCliente', 'in', [telefono, telefonoConCodigo])
                 .orderBy('fecha', 'desc')
                 .limit(1)
                 .get();
