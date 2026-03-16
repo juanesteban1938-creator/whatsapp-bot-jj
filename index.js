@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 6.2.0 (Baileys + historial Firestore)
+ * Versión: 6.3.0 (Baileys + historial + bandeja de conversaciones)
  */
 
 const express = require('express');
@@ -75,6 +75,121 @@ async function connectToWhatsApp() {
             isReady = true;
             qrCodeBase64 = '';
             console.log('[Nova] ✅ Sistema listo y conectado.');
+        }
+    });
+
+    // ── Listener de mensajes entrantes ──────────────────────────────────
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        const msg = messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+
+        const jid = msg.key.remoteJid;
+        if (!jid || jid.includes('@g.us')) return; // ignorar grupos
+
+        const textoRaw = (
+            msg.message.conversation ||
+            msg.message.extendedTextMessage?.text || ''
+        ).trim();
+        const texto = textoRaw.toLowerCase();
+        const telefono = jid.replace('@s.whatsapp.net', '').replace(/^57/, '');
+
+        console.log(`[Nova] 📩 Mensaje de ${telefono}: ${textoRaw}`);
+
+        // Guardar mensaje entrante en Firestore
+        try {
+            await db.collection('conversaciones').add({
+                jid,
+                telefono,
+                mensaje: textoRaw,
+                tipo: 'entrante',
+                leido: false,
+                fecha: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } catch(e) { console.error('[Nova] Error guardando mensaje:', e.message); }
+
+        // Buscar último servicio del cliente
+        let ultimoServicio = null;
+        let nombreCliente = 'Cliente';
+        try {
+            const snap = await db.collection('services')
+                .where('telefonoCliente', '==', telefono)
+                .orderBy('fecha', 'desc')
+                .limit(1)
+                .get();
+            if (!snap.empty) {
+                ultimoServicio = snap.docs[0].data();
+                nombreCliente = ultimoServicio.clienteNombre || ultimoServicio.cliente || 'Cliente';
+            }
+        } catch(e) { console.error('[Nova] Error buscando servicio:', e.message); }
+
+        // Actualizar nombre en conversación si se encontró cliente
+        if (nombreCliente !== 'Cliente') {
+            try {
+                const convSnap = await db.collection('conversaciones')
+                    .where('jid', '==', jid)
+                    .orderBy('fecha', 'desc')
+                    .limit(1)
+                    .get();
+                if (!convSnap.empty) {
+                    await convSnap.docs[0].ref.update({ nombre: nombreCliente });
+                }
+            } catch(e) {}
+        }
+
+        let respuesta = null;
+
+        // ── Respuestas automáticas ───────────────────────────────────────
+        if (texto.includes('hola') || texto.includes('buenas') || texto.includes('buen dia') || texto.includes('buenos dias')) {
+            respuesta = `¡Hola, *${nombreCliente}*! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nPuedes escribirme:\n\n📋 *estado* — Ver tu último servicio\n📞 *contacto* — Información de contacto\n❓ *ayuda* — Ver todas las opciones\n\n¡Con gusto te atiendo! 😊`;
+        }
+        else if (texto.includes('estado') || texto.includes('servicio') || texto.includes('mi viaje')) {
+            if (!ultimoServicio) {
+                respuesta = `Hola 👋 No encontré servicios registrados con este número.\n\nPara más información contáctanos al 📞 *314 2889955*.`;
+            } else {
+                const estadoEmoji = { 'Programado': '🗓️', 'En Servicio': '🚐', 'Finalizado': '✅', 'Cancelado': '❌' }[ultimoServicio.estado] || '📋';
+                const fecha = ultimoServicio.fecha ? new Date(ultimoServicio.fecha).toLocaleDateString('es-CO') : 'N/A';
+                respuesta = `Hola *${nombreCliente}* 👋\n\nEstado de tu último servicio:\n\n━━━━━━━━━━━━━━━━\n${estadoEmoji} *Estado:* ${ultimoServicio.estado}\n🗓️ *Fecha:* ${fecha}\n⏰ *Hora:* ${ultimoServicio.hora || 'N/A'}\n📍 *Origen:* ${ultimoServicio.origen}\n🏁 *Destino:* ${ultimoServicio.destino}\n👤 *Conductor:* ${ultimoServicio.conductor || 'Por asignar'}\n━━━━━━━━━━━━━━━━\n\n¿Necesitas algo más? Escribe *ayuda* 😊`;
+            }
+        }
+        else if (texto.includes('ayuda') || texto.includes('opciones') || texto.includes('menu') || texto.includes('menú')) {
+            respuesta = `Hola *${nombreCliente}* 👋 Estas son mis opciones:\n\n📋 *estado* — Ver tu último servicio\n📞 *contacto* — Datos de contacto\n💰 *pago* — Estado de pago de tu servicio\n\n¿En qué te puedo ayudar? 😊`;
+        }
+        else if (texto.includes('contacto') || texto.includes('telefono') || texto.includes('teléfono') || texto.includes('numero')) {
+            respuesta = `📞 *Transportes Especiales J&J*\n\nCelular: *+57 314 2889955*\nCorreo: transportes.especialesjyj@gmail.com\nDirección: Carrera 58 #130A-82\n\n¡Con gusto te atendemos! 😊`;
+        }
+        else if (texto.includes('pago') || texto.includes('factura') || texto.includes('cobro') || texto.includes('deuda')) {
+            if (!ultimoServicio) {
+                respuesta = `No encontré servicios con este número. Contáctanos al 📞 *314 2889955*.`;
+            } else {
+                const estadoPago = ultimoServicio.estadoPago || 'Pendiente';
+                const saldo = Number(ultimoServicio.saldo) || 0;
+                const pagoEmoji = estadoPago === 'Pagado' ? '✅' : '⚠️';
+                respuesta = `${pagoEmoji} *Estado de pago:* ${estadoPago}\n💵 *Saldo pendiente:* $${saldo.toLocaleString('es-CO')}\n\nPara realizar tu pago:\n🏦 Cuenta Ahorros *99642554661* Bancolombia\n\n¡Gracias por tu preferencia! 🙏`;
+            }
+        }
+        else {
+            // Mensaje no reconocido
+            respuesta = `Hola *${nombreCliente}* 👋\n\nNo entendí tu mensaje. Escribe *ayuda* para ver las opciones disponibles. 😊`;
+        }
+
+        // Enviar respuesta
+        if (respuesta) {
+            try {
+                await sock.sendMessage(jid, { text: respuesta });
+                console.log(`[Nova] ✅ Respuesta enviada a ${telefono}`);
+
+                // Guardar respuesta en Firestore
+                await db.collection('conversaciones').add({
+                    jid,
+                    telefono,
+                    nombre: 'Nova',
+                    mensaje: respuesta,
+                    tipo: 'saliente',
+                    leido: true,
+                    fecha: admin.firestore.FieldValue.serverTimestamp()
+                });
+            } catch(e) { console.error('[Nova] Error enviando respuesta:', e.message); }
         }
     });
 }
@@ -230,8 +345,8 @@ cron.schedule('* * * * *', async () => {
                     // fecha es ISO string, hora es "HH:mm"
                     const fechaBase = new Date(s.fecha);
                     const [horas, minutos] = s.hora.split(':').map(Number);
-const fechaStr = `${s.fecha.substring(0, 10)}T${s.hora}:00-05:00`;
-horaRecogida = new Date(fechaStr);
+                    horaRecogida = new Date(fechaBase);
+                    horaRecogida.setHours(horas, minutos, 0, 0);
                 } catch(e) { console.error('[Cron] Error fecha:', e.message); continue; }
             } else {
                 console.log(`[Cron] Sin fecha/hora para: ${docSnap.id}`);
