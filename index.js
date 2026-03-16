@@ -92,7 +92,8 @@ async function connectToWhatsApp() {
             msg.message.extendedTextMessage?.text || ''
         ).trim();
         const texto = textoRaw.toLowerCase();
-        const telefono = jid.replace('@s.whatsapp.net', '').replace(/^57/, '');
+        const telefonoConCodigo = jid.replace('@s.whatsapp.net', '');
+const telefono = telefonoConCodigo.replace(/^57/, '');
 
         console.log(`[Nova] 📩 Mensaje de ${telefono}: ${textoRaw}`);
 
