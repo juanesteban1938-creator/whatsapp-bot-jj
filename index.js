@@ -111,6 +111,28 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
             texto.includes('necesito') || texto.includes('servicio');
 
         if (esSaludo) {
+            // Verificar si tiene servicio activo
+            let servicioActivo = null;
+            try {
+                const snapActivo = await db.collection('services')
+                    .where('telefonoCliente', 'in', [telefono, '57' + telefono])
+                    .where('estado', 'in', ['Programado', 'En Servicio'])
+                    .orderBy('fecha', 'desc').limit(1).get();
+                if (!snapActivo.empty) servicioActivo = snapActivo.docs[0].data();
+            } catch(e) {}
+
+            if (servicioActivo) {
+                // Cliente con servicio activo — respuesta contextual
+                const estadoEmoji = servicioActivo.estado === 'En Servicio' ? '🚐' : '🗓️';
+                const fecha = servicioActivo.fecha
+                    ? new Date(servicioActivo.fecha).toLocaleDateString('es-CO') : 'N/A';
+                await enviar(jid, telefono,
+                    `¡Hola, *${nombreCliente}*! 😊\n\nTienes un servicio activo con nosotros:\n\n━━━━━━━━━━━━━━━━\n${estadoEmoji} *Estado:* ${servicioActivo.estado}\n🗓️ *Fecha:* ${fecha}\n⏰ *Hora:* ${servicioActivo.hora || 'N/A'}\n📍 *Origen:* ${servicioActivo.origen}\n🏁 *Destino:* ${servicioActivo.destino}\n👤 *Conductor:* ${servicioActivo.conductor || 'Por asignar'}\n━━━━━━━━━━━━━━━━\n\n¿Necesitas algo más? Escribe *contacto* para hablar con un asesor. 😊`
+                );
+                return;
+            }
+
+            // Cliente sin servicio activo — mostrar menú normal
             const saludo = nombreCliente !== 'Cliente' ? `¡Hola, *${nombreCliente}*! 😊` : `¡Hola! 😊`;
             await enviar(jid, telefono,
                 `${saludo} Bienvenido a *Transportes Especiales J&J* 🚐\n\nSoy *Nova*, tu asistente virtual. Es un placer atenderte.\n\n¿Qué tipo de vehículo necesitas para tu servicio?\n\n1️⃣ Sedán / SUV — hasta 4 pasajeros\n2️⃣ Van — de 10 a 15 pasajeros\n3️⃣ Bus — de 16 a 40 pasajeros\n4️⃣ Hablar con un asesor\n\n_Responde con el número de tu opción._`
