@@ -113,7 +113,7 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
         if (esSaludo) {
             const saludo = nombreCliente !== 'Cliente' ? `¡Hola, *${nombreCliente}*! 😊` : `¡Hola! 😊`;
             await enviar(jid, telefono,
-                `${saludo} Bienvenido a *Transportes Especiales J&J* 🚐\n\nSoy *Nova*, tu asistente virtual. Es un placer atenderte.\n\n¿Qué tipo de vehículo necesitas para tu servicio?\n\n1️⃣ Sedán / SUV — hasta 4 pasajeros\n2️⃣ Van — de 10 a 15 pasajeros\n3️⃣ Bus — de 16 a 40 pasajeros\n\n_Responde con el número de tu opción._`
+                `${saludo} Bienvenido a *Transportes Especiales J&J* 🚐\n\nSoy *Nova*, tu asistente virtual. Es un placer atenderte.\n\n¿Qué tipo de vehículo necesitas para tu servicio?\n\n1️⃣ Sedán / SUV — hasta 4 pasajeros\n2️⃣ Van — de 10 a 15 pasajeros\n3️⃣ Bus — de 16 a 40 pasajeros\n4️⃣ Hablar con un asesor\n\n_Responde con el número de tu opción._`
             );
             await guardarSesion(jid, {
                 paso: 'esperando_vehiculo', telefono, nombreCliente,
@@ -194,10 +194,39 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
 
     // Paso 1: Esperando tipo de vehículo
     if (paso === 'esperando_vehiculo') {
-        const opcion = texto.replace(/[^1-3]/g, '').trim();
+        const opcion = texto.replace(/[^1-4]/g, '').trim();
+
+        // Opción 4 — Hablar con asesor
+        if (opcion === '4' || texto.includes('asesor') || texto.includes('agente') || texto.includes('humano') || texto.includes('persona')) {
+            await eliminarSesion(jid);
+
+            // Registrar solicitud de asesor en Firestore
+            try {
+                await db.collection('solicitudes_asesor').add({
+                    jid,
+                    telefono,
+                    nombreCliente,
+                    motivo: 'Solicitud manual desde menú',
+                    estado: 'pendiente',
+                    fecha: admin.firestore.FieldValue.serverTimestamp()
+                });
+                // Activar modo agente inmediatamente
+                await db.collection('modo_agente').doc(jid).set({
+                    activo: true,
+                    activadoPor: 'solicitud_cliente',
+                    fecha: new Date().toISOString()
+                });
+            } catch(e) { console.error('[Nova] Error registrando solicitud:', e.message); }
+
+            await enviar(jid, telefono,
+                `¡Con mucho gusto! 😊\n\nHemos notificado a uno de nuestros asesores. En los próximos minutos alguien de nuestro equipo de *Transportes Especiales J&J* te contactará aquí mismo para brindarte atención personalizada. ⏱️\n\nEstamos aquí para servirte. 🌟`
+            );
+            return;
+        }
+
         if (!VEHICULOS[opcion]) {
             await enviar(jid, telefono,
-                `Por favor responde con *1*, *2* o *3* según el tipo de vehículo que necesitas:\n\n1️⃣ Sedán / SUV — hasta 4 pasajeros\n2️⃣ Van — de 10 a 15 pasajeros\n3️⃣ Bus — de 16 a 40 pasajeros`
+                `Por favor responde con el número de tu opción:\n\n1️⃣ Sedán / SUV — hasta 4 pasajeros\n2️⃣ Van — de 10 a 15 pasajeros\n3️⃣ Bus — de 16 a 40 pasajeros\n4️⃣ Hablar con un asesor`
             );
             return;
         }
@@ -388,6 +417,40 @@ async function connectToWhatsApp() {
                 if (!snap.empty) nombreCliente = snap.docs[0].data().nombreCliente || 'Cliente';
             } catch(e) {}
         }
+
+        // Verificar si hay un agente humano atendiendo (modo agente)
+        try {
+            const agenteSnap = await db.collection('modo_agente').doc(jid).get();
+            if (agenteSnap.exists) {
+                const data = agenteSnap.data();
+                const horasTranscurridas = (Date.now() - new Date(data.fecha).getTime()) / 3600000;
+                if (horasTranscurridas < 72) {
+                    console.log(`[Nova] 🧑 Agente humano atendiendo a ${telefono} — Nova en pausa (${horasTranscurridas.toFixed(1)}h)`);
+                    return; // Nova no responde mientras el agente esté activo
+                } else {
+                    // Expiró — Nova retoma el control
+                    await db.collection('modo_agente').doc(jid).delete();
+                    console.log(`[Nova] ⏰ Modo agente expirado para ${telefono} — Nova retoma`);
+                }
+            }
+        } catch(e) { console.error('[Nova] Error verificando modo agente:', e.message); }
+
+        // Verificar si hay un agente humano atendiendo (modo agente 72 horas)
+        try {
+            const agenteSnap = await db.collection('modo_agente').doc(jid).get();
+            if (agenteSnap.exists) {
+                const data = agenteSnap.data();
+                const horasTranscurridas = (Date.now() - new Date(data.fecha).getTime()) / 3600000;
+                if (horasTranscurridas < 72) {
+                    console.log(`[Nova] 🧑 Agente humano activo para ${telefono} — Nova en pausa (${horasTranscurridas.toFixed(1)}h)`);
+                    return; // Nova no responde
+                } else {
+                    // Expiró — Nova retoma el control
+                    await db.collection('modo_agente').doc(jid).delete();
+                    console.log(`[Nova] ⏱️ Modo agente expirado para ${telefono} — Nova retoma`);
+                }
+            }
+        } catch(e) { console.error('[Nova] Error verificando modo agente:', e.message); }
 
         // Obtener sesión activa
         let sesion = null;
