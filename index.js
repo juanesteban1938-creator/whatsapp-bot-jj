@@ -400,10 +400,23 @@ async function connectToWhatsApp() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+        if (!msg.message) return;
 
         const jid = msg.key.remoteJid;
         if (!jid || jid.includes('@g.us')) return;
+
+        // Si el asesor responde directamente desde WhatsApp → activar modo agente
+        if (msg.key.fromMe) {
+            try {
+                await db.collection('modo_agente').doc(jid).set({
+                    activo: true,
+                    activadoPor: 'respuesta_directa_whatsapp',
+                    fecha: new Date().toISOString()
+                });
+                console.log(`[Nova] 🧑 Modo agente activado por respuesta directa a ${jid}`);
+            } catch(e) { console.error('[Nova] Error activando modo agente:', e.message); }
+            return;
+        }
 
         const textoRaw = (
             msg.message.conversation ||
