@@ -671,6 +671,16 @@ cron.schedule('* * * * *', async () => {
                 if (!phone) { console.error('[Cron] Sin teléfono para', docSnap.id); continue; }
 
                 try {
+                    // 1. Cambiar estado a "En Servicio" automáticamente
+                    await docSnap.ref.update({
+                        estado: 'En Servicio',
+                        notificacionSalidaEnviada: true,
+                        iniciadoAutomaticamente: true,
+                        horaInicioReal: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                    console.log(`[Cron] ✅ Servicio ${docSnap.id} cambiado a En Servicio`);
+
+                    // 2. Enviar notificación de salida al cliente
                     await fetch(`http://localhost:${port}/send-departure-notification`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
@@ -681,8 +691,18 @@ cron.schedule('* * * * *', async () => {
                             destino: s.destino
                         })
                     });
-                    await docSnap.ref.update({ notificacionSalidaEnviada: true });
-                    console.log(`[Cron] ✅ Enviado para ${docSnap.id}`);
+
+                    // 3. Enviar link GPS al conductor automáticamente
+                    if (s.conductorTelefono) {
+                        const conductorJid = formatPhone(s.conductorTelefono);
+                        if (conductorJid) {
+                            const gpsLink = `https://studio--jj-connect--18988325-5ab9e.us-central1.hosted.app/gps/${docSnap.id}`;
+                            const msgConductor = `🚐 *Servicio ${s.consecutivo || docSnap.id} INICIADO*\n\nHola *${s.conductor}*, es la hora de tu servicio.\n\n📍 *Destino:* ${s.destino}\n👤 *Cliente:* ${s.clienteNombre || s.cliente}\n📞 *Contacto cliente:* ${s.telefonoCliente}\n\n━━━━━━━━━━━━━━━━\n⚠️ *IMPORTANTE:* Abre este link para activar el GPS y NO lo cierres durante el trayecto:\n\n🔗 ${gpsLink}\n━━━━━━━━━━━━━━━━\n\n¡Buen viaje! 🌟`;
+                            await sock.sendMessage(conductorJid, { text: msgConductor });
+                            console.log(`[Cron] ✅ Link GPS enviado al conductor ${s.conductor}`);
+                        }
+                    }
+
                 } catch(e) { console.error(`[Cron] Error:`, e.message); }
             }
         }
