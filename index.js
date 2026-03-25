@@ -536,7 +536,41 @@ app.post('/send-message', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/send-service-notification', authMiddleware, async (req, res) => {
+app.post('/send-file', authMiddleware, async (req, res) => {
+    const { jid, fileBase64, mimeType, fileName, caption } = req.body;
+    if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
+    if (!jid || !fileBase64 || !mimeType) return res.status(400).json({ error: 'Faltan datos' });
+    try {
+        const buffer = Buffer.from(fileBase64, 'base64');
+        let message;
+
+        if (mimeType.startsWith('image/')) {
+            message = { image: buffer, caption: caption || '', mimetype: mimeType };
+        } else {
+            message = { document: buffer, mimetype: mimeType, fileName: fileName || 'archivo', caption: caption || '' };
+        }
+
+        await sock.sendMessage(jid, message);
+        console.log('[Nova] ✅ Archivo enviado a:', jid);
+
+        await db.collection('conversaciones').add({
+            jid,
+            telefono: jid.replace('@s.whatsapp.net', '').replace(/^57/, ''),
+            nombre: 'Admin J&J',
+            mensaje: `📎 ${fileName || 'Archivo adjunto'}`,
+            tipo: 'saliente',
+            leido: true,
+            fecha: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        res.json({ success: true });
+    } catch(error) {
+        console.error('[Nova] Error enviando archivo:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
 
