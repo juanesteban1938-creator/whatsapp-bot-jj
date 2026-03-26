@@ -358,6 +358,79 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
     }
 }
 
+// ── Aplicar pago a un servicio ────────────────────────────────────────────────
+async function aplicarPago(jid, telefono, servicio, pago) {
+    const saldoActual = Number(servicio.saldo) || 0;
+    const anticipoActual = Number(servicio.anticipo) || 0;
+    const valorServicio = Number(servicio.valorServicio) || 0;
+    const valorPago = Number(pago.valor) || 0;
+
+    const nuevoAnticipo = anticipoActual + valorPago;
+    const nuevoSaldo = Math.max(0, valorServicio - nuevoAnticipo);
+    const estadoPago = nuevoSaldo <= 0 ? 'Pagado' : (nuevoAnticipo > 0 ? 'Anticipo' : 'Pendiente');
+
+    try {
+        // Actualizar servicio en Firestore
+        await db.collection('services').doc(servicio.id).update({
+            anticipo: nuevoAnticipo,
+            saldo: nuevoSaldo,
+            estadoPago,
+            ultimoPago: {
+                valor: valorPago,
+                numeroTransaccion: pago.numeroTransaccion || 'N/A',
+                bancoOrigen: pago.bancoOrigen || 'N/A',
+                bancoDestino: pago.bancoDestino || 'N/A',
+                fecha: pago.fecha || new Date().toLocaleDateString('es-CO'),
+                aplicadoEn: admin.firestore.FieldValue.serverTimestamp()
+            }
+        });
+
+        // Guardar en colección de pagos para auditoría
+        await db.collection('pagos_aplicados').add({
+            servicioId: servicio.id,
+            consecutivo: servicio.consecutivo,
+            clienteNombre: servicio.clienteNombre || servicio.cliente,
+            telefonoCliente: servicio.telefonoCliente,
+            valorPago,
+            numeroTransaccion: pago.numeroTransaccion || 'N/A',
+            bancoOrigen: pago.bancoOrigen || 'N/A',
+            bancoDestino: pago.bancoDestino || 'N/A',
+            saldoAnterior: saldoActual,
+            saldoNuevo: nuevoSaldo,
+            estadoPago,
+            fecha: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        console.log(`[Nova] ✅ Pago aplicado: $${valorPago} al servicio ${servicio.consecutivo}`);
+
+        // Responder al cliente/admin
+        const telefonoCliente = servicio.telefonoCliente;
+        const jidCliente = formatPhone(telefonoCliente);
+
+        if (estadoPago === 'Pagado') {
+            const msg = `✅ *¡Pago confirmado!*\n\nHola *${servicio.clienteNombre || servicio.cliente}*, hemos registrado tu pago:\n\n━━━━━━━━━━━━━━━━\n💵 *Valor:* $${valorPago.toLocaleString('es-CO')}\n🔢 *Transacción:* ${pago.numeroTransaccion || 'N/A'}\n🏦 *Banco:* ${pago.bancoOrigen || 'N/A'}\n📋 *Servicio:* ${servicio.consecutivo}\n✅ *Estado:* PAGADO\n━━━━━━━━━━━━━━━━\n\n¡Muchas gracias por tu pago! En breve recibirás tu cuenta de cobro por correo. 🙏`;
+            if (jidCliente) await sock.sendMessage(jidCliente, { text: msg });
+            if (jidCliente !== jid) await enviar(jid, telefono, `✅ Pago de $${valorPago.toLocaleString('es-CO')} aplicado al servicio ${servicio.consecutivo}. Estado: PAGADO.`);
+
+            // Notificar al panel para enviar correo
+            await db.collection('pagos_pendientes_correo').add({
+                servicioId: servicio.id,
+                emailCliente: servicio.emailCliente,
+                consecutivo: servicio.consecutivo,
+                pendiente: true,
+                fecha: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } else {
+            const msg = `✅ *Anticipo registrado*\n\nHola *${servicio.clienteNombre || servicio.cliente}*, registramos tu pago:\n\n━━━━━━━━━━━━━━━━\n💵 *Valor recibido:* $${valorPago.toLocaleString('es-CO')}\n🔢 *Transacción:* ${pago.numeroTransaccion || 'N/A'}\n📋 *Servicio:* ${servicio.consecutivo}\n⚠️ *Saldo pendiente:* $${nuevoSaldo.toLocaleString('es-CO')}\n━━━━━━━━━━━━━━━━\n\n¡Gracias! Cuando realices el pago del saldo envíanos el comprobante. 😊`;
+            if (jidCliente) await sock.sendMessage(jidCliente, { text: msg });
+            if (jidCliente !== jid) await enviar(jid, telefono, `✅ Anticipo de $${valorPago.toLocaleString('es-CO')} aplicado. Saldo pendiente: $${nuevoSaldo.toLocaleString('es-CO')}.`);
+        }
+    } catch(e) {
+        console.error('[Nova] Error aplicando pago:', e.message);
+        await enviar(jid, telefono, `Error al aplicar el pago. Por favor verifica manualmente.`);
+    }
+}
+
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('/app/.baileys_auth');
     const { version } = await fetchLatestBaileysVersion();
@@ -422,15 +495,152 @@ async function connectToWhatsApp() {
             msg.message.conversation ||
             msg.message.extendedTextMessage?.text || ''
         ).trim();
-        if (!textoRaw) return;
 
         const telefonoConCodigo = jid.replace('@s.whatsapp.net', '');
         const telefono = telefonoConCodigo.replace(/^57/, '');
 
-        console.log(`[Nova] 📩 Mensaje de ${telefono}: ${textoRaw}`);
+        // ── Detectar si es imagen/comprobante de pago ────────────────────────
+        const esImagen = msg.message.imageMessage || msg.message.documentMessage;
+        const ADMIN_PHONE = '3058532676';
+        const esAdmin = telefono === ADMIN_PHONE || telefonoConCodigo === `57${ADMIN_PHONE}`;
 
-        // Guardar mensaje entrante
+        if (esImagen) {
+            console.log(`[Nova] 🖼️ Imagen recibida de ${telefono}`);
+            await guardarMensaje(jid, telefono, '📎 Imagen recibida', 'entrante', telefono);
+
+            try {
+                // Descargar imagen
+                const buffer = await sock.downloadMediaMessage(msg);
+                const base64Image = buffer.toString('base64');
+                const mimeType = msg.message.imageMessage?.mimetype || 'image/jpeg';
+
+                // Analizar con Gemini Vision
+                const geminiRes = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: `Analiza este comprobante de pago bancario colombiano y extrae en formato JSON exacto:
+{
+  "esComprobante": true/false,
+  "valor": número sin puntos ni comas (ej: 150000),
+  "numeroTransaccion": "string o null",
+  "bancoOrigen": "string o null",
+  "bancoDestino": "string o null",
+  "fecha": "string o null",
+  "descripcion": "string breve"
+}
+Si no es un comprobante de pago, retorna esComprobante: false.` },
+                                    { inlineData: { mimeType, data: base64Image } }
+                                ]
+                            }],
+                            generationConfig: { temperature: 0 }
+                        })
+                    }
+                );
+
+                const geminiData = await geminiRes.json();
+                const textoGemini = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                console.log('[Nova] Gemini respuesta:', textoGemini);
+
+                // Parsear JSON de Gemini
+                const jsonMatch = textoGemini.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) throw new Error('No se pudo parsear respuesta de Gemini');
+                const pago = JSON.parse(jsonMatch[0]);
+
+                if (!pago.esComprobante) {
+                    await enviar(jid, telefono, `No pude identificar un comprobante de pago en esta imagen. 😊\n\nSi es un comprobante, asegúrate de que la imagen sea clara y muestre el valor y número de transacción.`);
+                    return;
+                }
+
+                console.log(`[Nova] 💰 Comprobante detectado: $${pago.valor} - Transacción: ${pago.numeroTransaccion}`);
+
+                if (esAdmin) {
+                    // Admin enviando comprobante — preguntar a qué cliente aplicar
+                    await db.collection('sesiones_nova').doc(jid).set({
+                        paso: 'admin_esperando_cliente_pago',
+                        pagoData: pago,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                    await enviar(jid, telefono,
+                        `✅ Comprobante detectado:\n💵 Valor: $${pago.valor?.toLocaleString('es-CO')}\n🏦 Banco: ${pago.bancoOrigen || 'N/A'} → ${pago.bancoDestino || 'N/A'}\n🔢 Transacción: ${pago.numeroTransaccion || 'N/A'}\n\n¿A qué cliente o servicio aplicamos este pago?\nEscribe el nombre, NIT o consecutivo (ej: JJ-1018)`
+                    );
+                } else {
+                    // Cliente enviando comprobante — buscar su servicio automáticamente
+                    const serviciosSnap = await db.collection('services')
+                        .where('telefonoCliente', 'in', [telefono, telefonoConCodigo])
+                        .where('estadoPago', 'in', ['Pendiente', 'Anticipo'])
+                        .orderBy('fecha', 'desc').limit(5).get();
+
+                    if (serviciosSnap.empty) {
+                        await enviar(jid, telefono, `Recibimos tu comprobante de $${pago.valor?.toLocaleString('es-CO')} 😊\n\nNo encontré servicios pendientes de pago asociados a tu número. Un asesor revisará y te confirmará. ⏱️`);
+                        return;
+                    }
+
+                    // Buscar servicio que coincida con el valor
+                    let servicioMatch = null;
+                    for (const doc of serviciosSnap.docs) {
+                        const s = doc.data();
+                        const saldo = Number(s.saldo) || 0;
+                        const valorServicio = Number(s.valorServicio) || 0;
+                        if (Math.abs(saldo - pago.valor) < saldo * 0.05 || Math.abs(valorServicio - pago.valor) < valorServicio * 0.05) {
+                            servicioMatch = { id: doc.id, ...s };
+                            break;
+                        }
+                    }
+
+                    if (!servicioMatch) {
+                        // No coincide exactamente — guardar como anticipo al primer servicio
+                        servicioMatch = { id: serviciosSnap.docs[0].id, ...serviciosSnap.docs[0].data() };
+                    }
+
+                    await aplicarPago(jid, telefono, servicioMatch, pago);
+                }
+            } catch(e) {
+                console.error('[Nova] Error procesando comprobante:', e.message);
+                await enviar(jid, telefono, `Recibimos tu imagen 📎\n\nNo pude procesar el comprobante automáticamente. Un asesor lo revisará y confirmará tu pago. ⏱️`);
+            }
+            return;
+        }
+
+        // ── Admin respondiendo a qué cliente aplicar el pago ────────────────
+        const sesionAdmin = await obtenerSesion(jid).catch(() => null);
+        if (esAdmin && sesionAdmin?.paso === 'admin_esperando_cliente_pago') {
+            const busqueda = textoRaw.toLowerCase().trim();
+            try {
+                // Buscar por consecutivo, nombre o NIT
+                const snaps = await Promise.all([
+                    db.collection('services').where('consecutivo', '==', textoRaw.toUpperCase()).limit(1).get(),
+                    db.collection('services').where('clienteNombre', '>=', busqueda).where('clienteNombre', '<=', busqueda + '\uf8ff').limit(1).get(),
+                    db.collection('services').where('nitCliente', '==', textoRaw).limit(1).get()
+                ]);
+
+                let servicioEncontrado = null;
+                for (const snap of snaps) {
+                    if (!snap.empty) { servicioEncontrado = { id: snap.docs[0].id, ...snap.docs[0].data() }; break; }
+                }
+
+                if (!servicioEncontrado) {
+                    await enviar(jid, telefono, `No encontré ningún servicio con "${textoRaw}". Intenta con el consecutivo (ej: JJ-1018), nombre completo o NIT del cliente.`);
+                    return;
+                }
+
+                await aplicarPago(jid, telefono, servicioEncontrado, sesionAdmin.pagoData);
+                await eliminarSesion(jid);
+            } catch(e) {
+                console.error('[Nova] Error buscando servicio admin:', e.message);
+                await enviar(jid, telefono, `Error buscando el servicio. Intenta de nuevo.`);
+            }
+            return;
+        }
+
+        console.log(`[Nova] 📩 Mensaje de ${telefono}: ${textoRaw}`);
         await guardarMensaje(jid, telefono, textoRaw, 'entrante', telefono);
+
+        if (!textoRaw) return;
 
         // Buscar nombre del cliente
         let nombreCliente = 'Cliente';
@@ -453,23 +663,6 @@ async function connectToWhatsApp() {
             } catch(e) {}
         }
 
-        // Verificar si hay un agente humano atendiendo (modo agente)
-        try {
-            const agenteSnap = await db.collection('modo_agente').doc(jid).get();
-            if (agenteSnap.exists) {
-                const data = agenteSnap.data();
-                const horasTranscurridas = (Date.now() - new Date(data.fecha).getTime()) / 3600000;
-                if (horasTranscurridas < 72) {
-                    console.log(`[Nova] 🧑 Agente humano atendiendo a ${telefono} — Nova en pausa (${horasTranscurridas.toFixed(1)}h)`);
-                    return; // Nova no responde mientras el agente esté activo
-                } else {
-                    // Expiró — Nova retoma el control
-                    await db.collection('modo_agente').doc(jid).delete();
-                    console.log(`[Nova] ⏰ Modo agente expirado para ${telefono} — Nova retoma`);
-                }
-            }
-        } catch(e) { console.error('[Nova] Error verificando modo agente:', e.message); }
-
         // Verificar si hay un agente humano atendiendo (modo agente 72 horas)
         try {
             const agenteSnap = await db.collection('modo_agente').doc(jid).get();
@@ -478,9 +671,8 @@ async function connectToWhatsApp() {
                 const horasTranscurridas = (Date.now() - new Date(data.fecha).getTime()) / 3600000;
                 if (horasTranscurridas < 72) {
                     console.log(`[Nova] 🧑 Agente humano activo para ${telefono} — Nova en pausa (${horasTranscurridas.toFixed(1)}h)`);
-                    return; // Nova no responde
+                    return;
                 } else {
-                    // Expiró — Nova retoma el control
                     await db.collection('modo_agente').doc(jid).delete();
                     console.log(`[Nova] ⏱️ Modo agente expirado para ${telefono} — Nova retoma`);
                 }
