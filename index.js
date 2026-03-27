@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.0.9 (Lista de Cartera para Admin + Fix de LID)
+ * Versión: 7.1.0 (Lista de Cartera para Admin + Fix Sintaxis)
  */
 
 const express = require('express');
@@ -410,4 +410,117 @@ async function aplicarPago(jid, telefono, servicio, pago) {
         if (estadoPago === 'Pagado') {
             const msg = `✅ *¡Pago confirmado!*\n\nHola *${servicio.clienteNombre || servicio.cliente}*, hemos registrado tu pago:\n\n━━━━━━━━━━━━━━━━\n💵 *Valor:* $${valorPago.toLocaleString('es-CO')}\n🔢 *Transacción:* ${pago.numeroTransaccion || 'N/A'}\n🏦 *Banco:* ${pago.bancoOrigen || 'N/A'}\n📋 *Servicio:* ${servicio.consecutivo}\n✅ *Estado:* PAGADO\n━━━━━━━━━━━━━━━━\n\n¡Muchas gracias por tu pago! En breve recibirás tu cuenta de cobro por correo. 🙏`;
             if (jidCliente) await sock.sendMessage(jidCliente, { text: msg });
-            if (jidCliente !== jid) await enviar(jid, telefono, `✅ Pago de $${valor
+            if (jidCliente !== jid) await enviar(jid, telefono, `✅ Pago de $${valorPago.toLocaleString('es-CO')} aplicado al servicio ${servicio.consecutivo}. Estado: PAGADO.`);
+
+            // Notificar al panel para enviar correo
+            await db.collection('pagos_pendientes_correo').add({
+                servicioId: servicio.id,
+                emailCliente: servicio.emailCliente,
+                consecutivo: servicio.consecutivo,
+                pendiente: true,
+                fecha: admin.firestore.FieldValue.serverTimestamp()
+            });
+        } else {
+            const msg = `✅ *Anticipo registrado*\n\nHola *${servicio.clienteNombre || servicio.cliente}*, registramos tu pago:\n\n━━━━━━━━━━━━━━━━\n💵 *Valor recibido:* $${valorPago.toLocaleString('es-CO')}\n🔢 *Transacción:* ${pago.numeroTransaccion || 'N/A'}\n📋 *Servicio:* ${servicio.consecutivo}\n⚠️ *Saldo pendiente:* $${nuevoSaldo.toLocaleString('es-CO')}\n━━━━━━━━━━━━━━━━\n\n¡Gracias! Cuando realices el pago del saldo envíanos el comprobante. 😊`;
+            if (jidCliente) await sock.sendMessage(jidCliente, { text: msg });
+            if (jidCliente !== jid) await enviar(jid, telefono, `✅ Anticipo de $${valorPago.toLocaleString('es-CO')} aplicado. Saldo pendiente: $${nuevoSaldo.toLocaleString('es-CO')}.`);
+        }
+    } catch(e) {
+        console.error('[Nova] Error aplicando pago:', e.message);
+        await enviar(jid, telefono, `Error al aplicar el pago. Por favor verifica manualmente.`);
+    }
+}
+
+async function connectToWhatsApp() {
+    const { state, saveCreds } = await useMultiFileAuthState('/app/.baileys_auth');
+    const { version } = await fetchLatestBaileysVersion();
+
+    sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        logger: pino({ level: 'silent' }),
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            qrCodeBase64 = await qrcode.toDataURL(qr);
+            isReady = false;
+            console.log('[Nova] QR generado - esperando escaneo...');
+        }
+
+        if (connection === 'close') {
+            isReady = false;
+            const shouldReconnect = (lastDisconnect?.error instanceof Boom)
+                ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
+                : true;
+            console.log('[Nova] Desconectado. Reconectando:', shouldReconnect);
+            if (shouldReconnect) setTimeout(connectToWhatsApp, 3000);
+        }
+
+        if (connection === 'open') {
+            isReady = true;
+            qrCodeBase64 = '';
+            console.log('[Nova] ✅ Sistema listo y conectado.');
+        }
+    });
+
+    // ── Listener de mensajes entrantes ──────────────────────────────────────
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        const msg = messages[0];
+        if (!msg.message) return;
+
+        const jid = msg.key.remoteJid;
+        if (!jid || jid.includes('@g.us')) return;
+
+        // Si el asesor responde directamente desde WhatsApp → activar modo agente
+        if (msg.key.fromMe) {
+            try {
+                await db.collection('modo_agente').doc(jid).set({
+                    activo: true,
+                    activadoPor: 'respuesta_directa_whatsapp',
+                    fecha: new Date().toISOString()
+                });
+                console.log(`[Nova] 🧑 Modo agente activado por respuesta directa a ${jid}`);
+            } catch(e) { console.error('[Nova] Error activando modo agente:', e.message); }
+            return;
+        }
+
+        const textoRaw = (
+            msg.message.conversation ||
+            msg.message.extendedTextMessage?.text || ''
+        ).trim();
+
+        // ── EXTRACCIÓN INTELIGENTE DEL NÚMERO REAL ──────────────────────────
+        // Si el cliente usa WhatsApp Business (LID), extraemos su número real
+        const realJid = msg.key.senderPn || jid;
+        const telefonoConCodigo = realJid.replace('@s.whatsapp.net', '').replace('@lid', '');
+        const telefono = telefonoConCodigo.replace(/^57/, '');
+
+        // ── Detectar si es imagen/comprobante de pago ────────────────────────
+        const esImagen = msg.message.imageMessage || msg.message.documentMessage;
+        
+        // ── VALIDACIÓN DE ADMINISTRADOR ────────────────────────
+        const ADMIN_PHONE = '3058532676';
+        const ADMIN_LID = '55267655942264'; // Tu identificador interno de WhatsApp
+        
+        const esAdmin = telefono === ADMIN_PHONE || 
+                        telefonoConCodigo === `57${ADMIN_PHONE}` || 
+                        jid.includes(ADMIN_LID);
+
+        if (esImagen) {
+            console.log(`[Nova] 🖼️ Imagen recibida de ${telefono}`);
+            await guardarMensaje(jid, telefono, '📎 Imagen recibida', 'entrante', telefono);
+
+            try {
+                // Descargar imagen usando la función de Baileys
+                const buffer = await downloadMediaMessage(
+                    msg,
+                    'buffer',
+                    { },
+                    { logger: pino({
