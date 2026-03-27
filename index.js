@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.0.0 (Flujo conversacional + cotizaciones)
+ * Versión: 7.0.1 (Fix de inicialización de endpoint)
  */
 
 const express = require('express');
@@ -762,7 +762,7 @@ app.post('/send-file', authMiddleware, async (req, res) => {
     }
 });
 
-
+app.post('/send-service-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
 
