@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.0.2 (Fix descarga de medios Baileys)
+ * Versión: 7.0.4 (Fix Safety Settings Gemini + Raw Log)
  */
 
 const express = require('express');
@@ -543,18 +543,33 @@ Si no es un comprobante de pago, retorna esComprobante: false.` },
                                     { inlineData: { mimeType, data: base64Image } }
                                 ]
                             }],
-                            generationConfig: { temperature: 0 }
+                            generationConfig: { temperature: 0 },
+                            safetySettings: [
+                                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" }
+                            ]
                         })
                     }
                 );
 
                 const geminiData = await geminiRes.json();
+                
+                // NUEVO: Imprimir toda la respuesta de Google para diagnóstico
+                console.log('[Nova] 🔍 RAW Gemini:', JSON.stringify(geminiData, null, 2));
+
+                if (geminiData.error) {
+                    console.error('[Nova] ❌ Error directo desde Google Gemini:', geminiData.error);
+                    throw new Error(`Google rechazó la petición: ${geminiData.error.message}`);
+                }
+
                 const textoGemini = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                console.log('[Nova] Gemini respuesta:', textoGemini);
+                console.log('[Nova] Gemini respuesta parseada:', textoGemini);
 
                 // Parsear JSON de Gemini
                 const jsonMatch = textoGemini.match(/\{[\s\S]*\}/);
-                if (!jsonMatch) throw new Error('No se pudo parsear respuesta de Gemini');
+                if (!jsonMatch) throw new Error('No se pudo parsear respuesta de Gemini (está vacía o no tiene formato JSON)');
                 const pago = JSON.parse(jsonMatch[0]);
 
                 if (!pago.esComprobante) {
