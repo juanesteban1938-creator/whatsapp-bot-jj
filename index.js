@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.1.0 (Lista de Cartera para Admin + Fix Sintaxis)
+ * Versión: 7.1.1 (Lista de Cartera para Admin + Fix Sintaxis Final)
  */
 
 const express = require('express');
@@ -523,4 +523,126 @@ async function connectToWhatsApp() {
                     msg,
                     'buffer',
                     { },
-                    { logger: pino({
+                    { logger: pino({ level: 'silent' }) }
+                );
+                
+                const base64Image = buffer.toString('base64');
+                const mimeType = msg.message.imageMessage?.mimetype || 'image/jpeg';
+
+                // Analizar con Gemini Vision
+                const geminiRes = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: `Analiza este comprobante de pago bancario colombiano y extrae en formato JSON exacto:
+{
+  "esComprobante": true/false,
+  "valor": número sin puntos ni comas (ej: 150000),
+  "numeroTransaccion": "string o null",
+  "bancoOrigen": "string o null",
+  "bancoDestino": "string o null",
+  "fecha": "string o null",
+  "descripcion": "string breve"
+}
+Si no es un comprobante de pago, retorna esComprobante: false.` },
+                                    { inlineData: { mimeType, data: base64Image } }
+                                ]
+                            }],
+                            generationConfig: { temperature: 0 },
+                            safetySettings: [
+                                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" }
+                            ]
+                        })
+                    }
+                );
+
+                const geminiData = await geminiRes.json();
+
+                if (geminiData.error) {
+                    console.error('[Nova] ❌ Error directo desde Google Gemini:', geminiData.error);
+                    throw new Error(`Google rechazó la petición: ${geminiData.error.message}`);
+                }
+
+                const textoGemini = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                
+                // Parsear JSON de Gemini
+                const jsonMatch = textoGemini.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) throw new Error('No se pudo parsear respuesta de Gemini (está vacía o no tiene formato JSON)');
+                const pago = JSON.parse(jsonMatch[0]);
+
+                if (!pago.esComprobante) {
+                    await enviar(jid, telefono, `No pude identificar un comprobante de pago en esta imagen. 😊\n\nSi es un comprobante, asegúrate de que la imagen sea clara y muestre el valor y número de transacción.`);
+                    return;
+                }
+
+                console.log(`[Nova] 💰 Comprobante detectado: $${pago.valor} - Transacción: ${pago.numeroTransaccion}`);
+
+                if (esAdmin) {
+                    // Admin enviando comprobante — Consultar cartera pendiente primero
+                    let listaCartera = '';
+                    try {
+                        const pendientesSnap = await db.collection('services')
+                            .where('estadoPago', 'in', ['Pendiente', 'Anticipo'])
+                            .get(); 
+                            
+                        let serviciosPendientes = [];
+                        pendientesSnap.forEach(doc => serviciosPendientes.push({ id: doc.id, ...doc.data() }));
+                        
+                        // Ordenar por fecha (los más recientes primero)
+                        serviciosPendientes.sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+                        
+                        // Tomar solo los 15 más recientes para no hacer un mensaje gigante
+                        serviciosPendientes = serviciosPendientes.slice(0, 15);
+
+                        if (serviciosPendientes.length === 0) {
+                            listaCartera = '\n\n✅ *No hay servicios pendientes de cobro registrados en este momento.*';
+                        } else {
+                            listaCartera = '\n\n📋 *Cartera Pendiente:*\n';
+                            serviciosPendientes.forEach(s => {
+                                const saldo = Number(s.saldo) || Number(s.valorServicio) || 0;
+                                const consecutivo = s.consecutivo || 'Sin ID';
+                                const nombre = s.clienteNombre || s.cliente || 'Sin nombre';
+                                listaCartera += `• *${consecutivo}* - ${nombre} (Debe: $${saldo.toLocaleString('es-CO')})\n`;
+                            });
+                            listaCartera += '\n👉 Escribe el *consecutivo* (ej: JJ-1018) para aplicar el pago a uno de estos servicios.';
+                        }
+                    } catch (err) {
+                        console.error('[Nova] Error obteniendo cartera:', err.message);
+                        listaCartera = '\n\n_(No se pudo cargar la cartera pendiente automáticamente)_';
+                    }
+
+                    await db.collection('sesiones_nova').doc(jid).set({
+                        paso: 'admin_esperando_cliente_pago',
+                        pagoData: pago,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                    
+                    await enviar(jid, telefono,
+                        `✅ Comprobante detectado:\n💵 Valor: $${pago.valor?.toLocaleString('es-CO')}\n🏦 Banco: ${pago.bancoOrigen || 'N/A'} → ${pago.bancoDestino || 'N/A'}\n🔢 Transacción: ${pago.numeroTransaccion || 'N/A'}${listaCartera}`
+                    );
+                } else {
+                    // Cliente enviando comprobante — buscar su servicio automáticamente
+                    const serviciosSnap = await db.collection('services')
+                        .where('telefonoCliente', 'in', [telefono, telefonoConCodigo])
+                        .where('estadoPago', 'in', ['Pendiente', 'Anticipo'])
+                        .orderBy('fecha', 'desc').limit(5).get();
+
+                    if (serviciosSnap.empty) {
+                        await enviar(jid, telefono, `Recibimos tu comprobante de $${pago.valor?.toLocaleString('es-CO')} 😊\n\nNo encontré servicios pendientes de pago asociados a tu número. Un asesor revisará y te confirmará. ⏱️`);
+                        return;
+                    }
+
+                    // Buscar servicio que coincida con el valor
+                    let servicioMatch = null;
+                    for (const doc of serviciosSnap.docs) {
+                        const s = doc.data();
+                        const saldo = Number(s.saldo) || 0;
+                        const valorServicio = Number(s.valorServicio) || 0;
+                        if
