@@ -1,10 +1,10 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.0.1 (Fix de inicialización de endpoint)
+ * Versión: 7.0.2 (Fix descarga de medios Baileys)
  */
 
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
 const cors = require('cors');
@@ -509,8 +509,14 @@ async function connectToWhatsApp() {
             await guardarMensaje(jid, telefono, '📎 Imagen recibida', 'entrante', telefono);
 
             try {
-                // Descargar imagen
-                const buffer = await sock.downloadMediaMessage(msg);
+                // Descargar imagen usando la función de Baileys
+                const buffer = await downloadMediaMessage(
+                    msg,
+                    'buffer',
+                    { },
+                    { logger: pino({ level: 'silent' }) }
+                );
+                
                 const base64Image = buffer.toString('base64');
                 const mimeType = msg.message.imageMessage?.mimetype || 'image/jpeg';
 
