@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.0.5 (Actualización de modelo Gemini a 2.5-flash)
+ * Versión: 7.0.7 (Detector de LID para Panel Admin)
  */
 
 const express = require('express');
@@ -477,6 +477,16 @@ async function connectToWhatsApp() {
 
         const jid = msg.key.remoteJid;
         if (!jid || jid.includes('@g.us')) return;
+        
+        // ── DETECTOR DE LID (Temporal para diagnóstico) ─────────────────────────
+        if (jid.includes('@lid')) {
+            console.log('\n[Nova] 🕵️‍♂️ MENSAJE CON @LID DETECTADO 🕵️‍♂️');
+            console.log('--- KEY ---');
+            console.log(JSON.stringify(msg.key, null, 2));
+            console.log('--- MESSAGE INFO ---');
+            console.log(JSON.stringify(msg.message, null, 2));
+            console.log('---------------------------------------------------\n');
+        }
 
         // Si el asesor responde directamente desde WhatsApp → activar modo agente
         if (msg.key.fromMe) {
@@ -501,8 +511,14 @@ async function connectToWhatsApp() {
 
         // ── Detectar si es imagen/comprobante de pago ────────────────────────
         const esImagen = msg.message.imageMessage || msg.message.documentMessage;
+        
+        // ── VALIDACIÓN DE ADMINISTRADOR ────────────────────────
         const ADMIN_PHONE = '3058532676';
-        const esAdmin = telefono === ADMIN_PHONE || telefonoConCodigo === `57${ADMIN_PHONE}`;
+        const ADMIN_LID = '55267655942264'; // Tu identificador interno de WhatsApp
+        
+        const esAdmin = telefono === ADMIN_PHONE || 
+                        telefonoConCodigo === `57${ADMIN_PHONE}` || 
+                        jid.includes(ADMIN_LID);
 
         if (esImagen) {
             console.log(`[Nova] 🖼️ Imagen recibida de ${telefono}`);
@@ -555,9 +571,6 @@ Si no es un comprobante de pago, retorna esComprobante: false.` },
                 );
 
                 const geminiData = await geminiRes.json();
-                
-                // NUEVO: Imprimir toda la respuesta de Google para diagnóstico
-                console.log('[Nova] 🔍 RAW Gemini:', JSON.stringify(geminiData, null, 2));
 
                 if (geminiData.error) {
                     console.error('[Nova] ❌ Error directo desde Google Gemini:', geminiData.error);
