@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.3.0 (Restauración Completa de APIs + Cartera)
+ * Versión: 7.5.0 (Código Maestro 100% Verificado)
  */
 
 const express = require('express');
@@ -101,6 +101,7 @@ const BENEFICIOS = `✨ *¿Por qué elegirnos?*
 async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
     const texto = textoRaw.toLowerCase().trim();
 
+    // ── Sin sesión activa ─────────────────────────────────────────────────────
     if (!sesion) {
         const esSaludo = texto.includes('hola') || texto.includes('buenas') ||
             texto.includes('buen dia') || texto.includes('buenos dias') ||
@@ -121,8 +122,7 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
 
             if (servicioActivo) {
                 const estadoEmoji = servicioActivo.estado === 'En Servicio' ? '🚐' : '🗓️';
-                const fecha = servicioActivo.fecha
-                    ? new Date(servicioActivo.fecha).toLocaleDateString('es-CO') : 'N/A';
+                const fecha = servicioActivo.fecha ? new Date(servicioActivo.fecha).toLocaleDateString('es-CO') : 'N/A';
                 await enviar(jid, telefono,
                     `¡Hola, *${nombreCliente}*! 😊\n\nTienes un servicio activo con nosotros:\n\n━━━━━━━━━━━━━━━━\n${estadoEmoji} *Estado:* ${servicioActivo.estado}\n🗓️ *Fecha:* ${fecha}\n⏰ *Hora:* ${servicioActivo.hora || 'N/A'}\n📍 *Origen:* ${servicioActivo.origen}\n🏁 *Destino:* ${servicioActivo.destino}\n👤 *Conductor:* ${servicioActivo.conductor || 'Por asignar'}\n━━━━━━━━━━━━━━━━\n\n¿Necesitas algo más? Escribe *contacto* para hablar con un asesor. 😊`
                 );
@@ -135,8 +135,7 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
             );
             await guardarSesion(jid, {
                 paso: 'esperando_vehiculo', telefono, nombreCliente,
-                tipoVehiculo: null, lugarRecogida: null,
-                horaRecogida: null, fechaServicio: null, destino: null
+                tipoVehiculo: null, lugarRecogida: null, horaRecogida: null, fechaServicio: null, destino: null
             });
             return;
         }
@@ -182,16 +181,10 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
             return;
         }
 
-        const esDespedida = texto.includes('gracias') || texto.includes('ok') ||
-            texto === 'listo' || texto === 'perfecto' || texto === 'entendido' ||
-            texto === 'jajaja' || texto === 'jaja' || texto.includes('claro') ||
-            texto === 'genial' || texto === 'excelente' || texto === 'bien' ||
-            texto === '👍' || texto === '😊' || texto === '🙏';
+        const esDespedida = texto.includes('gracias') || texto.includes('ok') || texto === 'listo' || texto === 'perfecto' || texto === 'entendido' || texto === 'jajaja' || texto === 'jaja' || texto.includes('claro') || texto === 'genial' || texto === 'excelente' || texto === 'bien' || texto === '👍' || texto === '😊' || texto === '🙏';
         if (esDespedida) return;
 
-        await enviar(jid, telefono,
-            `¡Hola! 😊 Soy *Nova* de *Transportes Especiales J&J*.\n\nEscríbeme *hola* para cotizar un servicio o consultar:\n📋 *estado* — Ver tu último servicio\n💰 *pago* — Estado de pago\n📞 *contacto* — Información de contacto`
-        );
+        await enviar(jid, telefono, `¡Hola! 😊 Soy *Nova* de *Transportes Especiales J&J*.\n\nEscríbeme *hola* para cotizar un servicio o consultar:\n📋 *estado* — Ver tu último servicio\n💰 *pago* — Estado de pago\n📞 *contacto* — Información de contacto`);
         return;
     }
 
@@ -213,7 +206,7 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
                     jid, telefono, nombreCliente, motivo: 'Solicitud manual desde menú', estado: 'pendiente', fecha: admin.firestore.FieldValue.serverTimestamp()
                 });
                 await db.collection('modo_agente').doc(jid).set({ activo: true, activadoPor: 'solicitud_cliente', fecha: new Date().toISOString() });
-            } catch(e) {}
+            } catch(e) { console.error('[Nova] Error registrando solicitud:', e.message); }
             await enviar(jid, telefono, `¡Con mucho gusto! 😊\n\nHemos notificado a uno de nuestros asesores. En los próximos minutos alguien de nuestro equipo de *Transportes Especiales J&J* te contactará aquí mismo para brindarte atención personalizada. ⏱️\n\nEstamos aquí para servirte. 🌟`);
             return;
         }
@@ -225,7 +218,6 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
 
         const vehiculoElegido = VEHICULOS[opcion];
         const emoji = EMOJI_VEHICULO[opcion];
-
         await enviar(jid, telefono, `${emoji} *${vehiculoElegido}*\n\nExcelente elección. 😊\n\n${BENEFICIOS}`);
         await new Promise(r => setTimeout(r, 1500));
         await enviar(jid, telefono, `Perfecto 😊 Ahora necesito los detalles de tu servicio.\n\n📍 ¿Cuál es tu *lugar de recogida*?\n_(Escribe la dirección completa)_`);
@@ -259,7 +251,6 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
         await guardarSesion(jid, { paso: 'esperando_confirmacion', destino: textoRaw });
         const sesionActualizada = await obtenerSesion(jid);
         const emojiV = Object.keys(VEHICULOS).find(k => VEHICULOS[k] === sesionActualizada.tipoVehiculo);
-
         await enviar(jid, telefono, `¡Perfecto! Permíteme confirmar los datos de tu solicitud:\n\n━━━━━━━━━━━━━━━━\n${EMOJI_VEHICULO[emojiV] || '🚐'} *Vehículo:* ${sesionActualizada.tipoVehiculo}\n📍 *Recogida:* ${sesionActualizada.lugarRecogida}\n⏰ *Hora:* ${sesionActualizada.horaRecogida}\n🗓️ *Fecha:* ${sesionActualizada.fechaServicio}\n🏁 *Destino:* ${textoRaw}\n━━━━━━━━━━━━━━━━\n\n¿Es correcta esta información?\n\n✅ Escribe *SI* para confirmar\n✏️ Escribe *NO* para corregir`);
         return;
     }
@@ -268,11 +259,11 @@ async function procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion) {
         if (texto.includes('si') || texto === 's' || texto.includes('sí') || texto.includes('confirmo') || texto.includes('correcto')) {
             try {
                 await db.collection('cotizaciones').add({
-                    telefono: sesion.telefono, nombreCliente: sesion.nombreCliente, jid,
-                    tipoVehiculo: sesion.tipoVehiculo, lugarRecogida: sesion.lugarRecogida, horaRecogida: sesion.horaRecogida, fechaServicio: sesion.fechaServicio, destino: sesion.destino,
-                    estado: 'pendiente', fecha: admin.firestore.FieldValue.serverTimestamp()
+                    telefono: sesion.telefono, nombreCliente: sesion.nombreCliente, jid, tipoVehiculo: sesion.tipoVehiculo, lugarRecogida: sesion.lugarRecogida, horaRecogida: sesion.horaRecogida, fechaServicio: sesion.fechaServicio, destino: sesion.destino, estado: 'pendiente', fecha: admin.firestore.FieldValue.serverTimestamp()
                 });
-            } catch(e) {}
+                console.log(`[Nova] ✅ Cotización guardada para ${sesion.telefono}`);
+            } catch(e) { console.error('[Nova] Error guardando cotización:', e.message); }
+
             await eliminarSesion(jid);
             await enviar(jid, telefono, `¡Muchas gracias por tu solicitud! 🙌\n\nTus datos han sido enviados a nuestro equipo de operaciones. Un asesor de *Transportes Especiales J&J* te responderá en este mismo chat en los próximos minutos. ⏱️\n\nEstamos aquí para servirte. 😊`);
             return;
@@ -319,7 +310,6 @@ async function aplicarPago(jid, telefono, servicio, pago) {
             const msg = `✅ *¡Pago confirmado!*\n\nHola *${servicio.clienteNombre || servicio.cliente}*, hemos registrado tu pago:\n\n━━━━━━━━━━━━━━━━\n💵 *Valor:* $${valorPago.toLocaleString('es-CO')}\n🔢 *Transacción:* ${pago.numeroTransaccion || 'N/A'}\n🏦 *Banco:* ${pago.bancoOrigen || 'N/A'}\n📋 *Servicio:* ${servicio.consecutivo}\n✅ *Estado:* PAGADO\n━━━━━━━━━━━━━━━━\n\n¡Muchas gracias por tu pago! En breve recibirás tu cuenta de cobro por correo. 🙏`;
             if (jidCliente) await sock.sendMessage(jidCliente, { text: msg });
             if (jidCliente !== jid) await enviar(jid, telefono, `✅ Pago de $${valorPago.toLocaleString('es-CO')} aplicado al servicio ${servicio.consecutivo}. Estado: PAGADO.`);
-
             await db.collection('pagos_pendientes_correo').add({ servicioId: servicio.id, emailCliente: servicio.emailCliente, consecutivo: servicio.consecutivo, pendiente: true, fecha: admin.firestore.FieldValue.serverTimestamp() });
         } else {
             const msg = `✅ *Anticipo registrado*\n\nHola *${servicio.clienteNombre || servicio.cliente}*, registramos tu pago:\n\n━━━━━━━━━━━━━━━━\n💵 *Valor recibido:* $${valorPago.toLocaleString('es-CO')}\n🔢 *Transacción:* ${pago.numeroTransaccion || 'N/A'}\n📋 *Servicio:* ${servicio.consecutivo}\n⚠️ *Saldo pendiente:* $${nuevoSaldo.toLocaleString('es-CO')}\n━━━━━━━━━━━━━━━━\n\n¡Gracias! Cuando realices el pago del saldo envíanos el comprobante. 😊`;
@@ -338,10 +328,11 @@ async function connectToWhatsApp() {
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
-        if (qr) { qrCodeBase64 = await qrcode.toDataURL(qr); isReady = false; console.log('[Nova] QR generado...'); }
+        if (qr) { qrCodeBase64 = await qrcode.toDataURL(qr); isReady = false; console.log('[Nova] QR generado - esperando escaneo...'); }
         if (connection === 'close') {
             isReady = false;
             const shouldReconnect = (lastDisconnect?.error instanceof Boom) ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut : true;
+            console.log('[Nova] Desconectado. Reconectando:', shouldReconnect);
             if (shouldReconnect) setTimeout(connectToWhatsApp, 3000);
         }
         if (connection === 'open') { isReady = true; qrCodeBase64 = ''; console.log('[Nova] ✅ Sistema listo y conectado.'); }
@@ -356,7 +347,10 @@ async function connectToWhatsApp() {
         if (!jid || jid.includes('@g.us')) return;
 
         if (msg.key.fromMe) {
-            try { await db.collection('modo_agente').doc(jid).set({ activo: true, activadoPor: 'respuesta_directa_whatsapp', fecha: new Date().toISOString() }); } catch(e) {}
+            try {
+                await db.collection('modo_agente').doc(jid).set({ activo: true, activadoPor: 'respuesta_directa_whatsapp', fecha: new Date().toISOString() });
+                console.log(`[Nova] 🧑 Modo agente activado por respuesta directa a ${jid}`);
+            } catch(e) { console.error('[Nova] Error activando modo agente:', e.message); }
             return;
         }
 
@@ -367,11 +361,13 @@ async function connectToWhatsApp() {
 
         const esImagen = msg.message.imageMessage || msg.message.documentMessage;
         const ADMIN_PHONE = '3058532676';
-        const ADMIN_LID = '55267655942264';
+        const ADMIN_LID = '55267655942264'; 
         const esAdmin = telefono === ADMIN_PHONE || telefonoConCodigo === `57${ADMIN_PHONE}` || jid.includes(ADMIN_LID);
 
         if (esImagen) {
+            console.log(`[Nova] 🖼️ Imagen recibida de ${telefono}`);
             await guardarMensaje(jid, telefono, '📎 Imagen recibida', 'entrante', telefono);
+
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', { }, { logger: pino({ level: 'silent' }) });
                 const base64Image = buffer.toString('base64');
@@ -395,14 +391,15 @@ async function connectToWhatsApp() {
                 );
 
                 const geminiData = await geminiRes.json();
-                if (geminiData.error) throw new Error(geminiData.error.message);
+                if (geminiData.error) throw new Error(`Google rechazó la petición: ${geminiData.error.message}`);
 
                 const textoGemini = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
                 const jsonMatch = textoGemini.match(/\{[\s\S]*\}/);
-                if (!jsonMatch) throw new Error('No JSON');
+                if (!jsonMatch) throw new Error('No se pudo parsear respuesta de Gemini');
                 const pago = JSON.parse(jsonMatch[0]);
 
-                if (!pago.esComprobante) { await enviar(jid, telefono, `No pude identificar un comprobante de pago en esta imagen. 😊`); return; }
+                if (!pago.esComprobante) { await enviar(jid, telefono, `No pude identificar un comprobante de pago en esta imagen. 😊\n\nSi es un comprobante, asegúrate de que la imagen sea clara y muestre el valor y número de transacción.`); return; }
+                console.log(`[Nova] 💰 Comprobante detectado: $${pago.valor} - Transacción: ${pago.numeroTransaccion}`);
 
                 if (esAdmin) {
                     let listaCartera = '';
@@ -413,9 +410,8 @@ async function connectToWhatsApp() {
                         serviciosPendientes.sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
                         serviciosPendientes = serviciosPendientes.slice(0, 15);
 
-                        if (serviciosPendientes.length === 0) {
-                            listaCartera = '\n\n✅ *No hay servicios pendientes de cobro registrados en este momento.*';
-                        } else {
+                        if (serviciosPendientes.length === 0) { listaCartera = '\n\n✅ *No hay servicios pendientes de cobro registrados en este momento.*'; } 
+                        else {
                             listaCartera = '\n\n📋 *Cartera Pendiente:*\n';
                             serviciosPendientes.forEach(s => {
                                 const saldo = Number(s.saldo) || Number(s.valorServicio) || 0;
@@ -423,7 +419,7 @@ async function connectToWhatsApp() {
                             });
                             listaCartera += '\n👉 Escribe el *consecutivo* (ej: JJ-1018) para aplicar el pago a uno de estos servicios.';
                         }
-                    } catch (err) { listaCartera = '\n\n_(No se pudo cargar la cartera pendiente automáticamente)_'; }
+                    } catch (err) { console.error('[Nova] Error obteniendo cartera:', err.message); listaCartera = '\n\n_(No se pudo cargar la cartera pendiente automáticamente)_'; }
 
                     await db.collection('sesiones_nova').doc(jid).set({ paso: 'admin_esperando_cliente_pago', pagoData: pago, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
                     await enviar(jid, telefono, `✅ Comprobante detectado:\n💵 Valor: $${pago.valor?.toLocaleString('es-CO')}\n🏦 Banco: ${pago.bancoOrigen || 'N/A'} → ${pago.bancoDestino || 'N/A'}\n🔢 Transacción: ${pago.numeroTransaccion || 'N/A'}${listaCartera}`);
@@ -433,14 +429,13 @@ async function connectToWhatsApp() {
 
                     let servicioMatch = null;
                     for (const doc of serviciosSnap.docs) {
-                        const s = doc.data();
-                        const saldo = Number(s.saldo) || 0; const valorServicio = Number(s.valorServicio) || 0;
+                        const s = doc.data(); const saldo = Number(s.saldo) || 0; const valorServicio = Number(s.valorServicio) || 0;
                         if (Math.abs(saldo - pago.valor) < saldo * 0.05 || Math.abs(valorServicio - pago.valor) < valorServicio * 0.05) { servicioMatch = { id: doc.id, ...s }; break; }
                     }
                     if (!servicioMatch) servicioMatch = { id: serviciosSnap.docs[0].id, ...serviciosSnap.docs[0].data() };
                     await aplicarPago(jid, telefono, servicioMatch, pago);
                 }
-            } catch(e) { await enviar(jid, telefono, `Recibimos tu imagen 📎\n\nNo pude procesar el comprobante automáticamente. Un asesor lo revisará y confirmará tu pago. ⏱️`); }
+            } catch(e) { console.error('[Nova] Error procesando comprobante:', e.message); await enviar(jid, telefono, `Recibimos tu imagen 📎\n\nNo pude procesar el comprobante automáticamente. Un asesor lo revisará y confirmará tu pago. ⏱️`); }
             return;
         }
 
@@ -455,14 +450,14 @@ async function connectToWhatsApp() {
                 ]);
                 let servicioEncontrado = null;
                 for (const snap of snaps) { if (!snap.empty) { servicioEncontrado = { id: snap.docs[0].id, ...snap.docs[0].data() }; break; } }
-
                 if (!servicioEncontrado) { await enviar(jid, telefono, `No encontré ningún servicio con "${textoRaw}". Intenta con el consecutivo (ej: JJ-1018), nombre completo o NIT del cliente.`); return; }
                 await aplicarPago(jid, telefono, servicioEncontrado, sesionAdmin.pagoData);
                 await eliminarSesion(jid);
-            } catch(e) { await enviar(jid, telefono, `Error buscando el servicio. Intenta de nuevo.`); }
+            } catch(e) { console.error('[Nova] Error buscando servicio admin:', e.message); await enviar(jid, telefono, `Error buscando el servicio. Intenta de nuevo.`); }
             return;
         }
 
+        console.log(`[Nova] 📩 Mensaje de ${telefono}: ${textoRaw}`);
         await guardarMensaje(jid, telefono, textoRaw, 'entrante', telefono);
         if (!textoRaw) return;
 
@@ -471,7 +466,6 @@ async function connectToWhatsApp() {
             const snap = await db.collection('services').where('telefonoCliente', 'in', [telefono, telefonoConCodigo]).orderBy('fecha', 'desc').limit(1).get();
             if (!snap.empty) { const s = snap.docs[0].data(); nombreCliente = s.clienteNombre || s.cliente || 'Cliente'; }
         } catch(e) {}
-
         if (nombreCliente === 'Cliente') {
             try {
                 const snap = await db.collection('cotizaciones').where('telefono', '==', telefono).orderBy('fecha', 'desc').limit(1).get();
@@ -483,10 +477,11 @@ async function connectToWhatsApp() {
             const agenteSnap = await db.collection('modo_agente').doc(jid).get();
             if (agenteSnap.exists) {
                 const data = agenteSnap.data();
-                if ((Date.now() - new Date(data.fecha).getTime()) / 3600000 < 72) return;
-                else await db.collection('modo_agente').doc(jid).delete();
+                const horasTranscurridas = (Date.now() - new Date(data.fecha).getTime()) / 3600000;
+                if (horasTranscurridas < 72) { console.log(`[Nova] 🧑 Agente activo para ${telefono}`); return; } 
+                else { await db.collection('modo_agente').doc(jid).delete(); console.log(`[Nova] ⏱️ Modo agente expirado para ${telefono}`); }
             }
-        } catch(e) {}
+        } catch(e) { console.error('[Nova] Error verificando modo agente:', e.message); }
 
         let sesion = null;
         try { sesion = await obtenerSesion(jid); } catch(e) {}
@@ -515,11 +510,10 @@ app.post('/send-message', authMiddleware, async (req, res) => {
         await sock.sendMessage(jid, { text: mensaje });
         await db.collection('conversaciones').add({
             jid, telefono: jid.replace('@s.whatsapp.net', '').replace(/^57/, ''),
-            nombre: 'Admin J&J', mensaje, tipo: 'saliente', leido: true,
-            fecha: admin.firestore.FieldValue.serverTimestamp()
+            nombre: 'Admin J&J', mensaje, tipo: 'saliente', leido: true, fecha: admin.firestore.FieldValue.serverTimestamp()
         });
         res.json({ success: true });
-    } catch(error) { res.status(500).json({ error: error.message }); }
+    } catch(error) { console.error('[Nova] Error enviando mensaje manual:', error.message); res.status(500).json({ error: error.message }); }
 });
 
 app.post('/send-file', authMiddleware, async (req, res) => {
@@ -533,16 +527,16 @@ app.post('/send-file', authMiddleware, async (req, res) => {
         else { message = { document: buffer, mimetype: mimeType, fileName: fileName || 'archivo', caption: caption || '' }; }
 
         await sock.sendMessage(jid, message);
+        console.log('[Nova] ✅ Archivo enviado a:', jid);
         await db.collection('conversaciones').add({
             jid, telefono: jid.replace('@s.whatsapp.net', '').replace(/^57/, ''),
             nombre: 'Admin J&J', mensaje: `📎 ${fileName || 'Archivo adjunto'}`,
             tipo: 'saliente', leido: true, fecha: admin.firestore.FieldValue.serverTimestamp()
         });
         res.json({ success: true });
-    } catch(error) { res.status(500).json({ error: error.message }); }
+    } catch(error) { console.error('[Nova] Error enviando archivo:', error.message); res.status(500).json({ error: error.message }); }
 });
 
-// ¡ESTA ES LA API DE NOTIFICACIÓN QUE HABÍA BORRADO POR ERROR!
 app.post('/send-service-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
@@ -552,16 +546,19 @@ app.post('/send-service-notification', authMiddleware, async (req, res) => {
     try {
         const text = `¡Hola, *${data.clienteNombre}*! 👋\n\nSoy *Nova*, asistente virtual de *Transportes Especiales J&J* 🚐\n\nTu servicio ha sido programado:\n\n━━━━━━━━━━━━━━━━\n🗓️ *Fecha:* ${data.fecha}\n⏰ *Hora:* ${data.hora}\n📍 *Origen:* ${data.origen}\n🏁 *Destino:* ${data.destino}\n🚗 *Placa:* ${data.placa}\n👤 *Conductor:* ${data.conductor}\n📞 *Contacto:* ${data.telefonoConductor}\n━━━━━━━━━━━━━━━━\n\nPor favor estar listo 10 minutos antes. 🙏\n\n¡Gracias por elegirnos! 🌟\n*Transportes Especiales J&J*`;
         await sock.sendMessage(jid, { text });
+        console.log('[Nova] ✅ Notificación de servicio enviada a:', jid);
         await db.collection('notificaciones_whatsapp').add({
             clienteNombre: data.clienteNombre, clienteTelefono: data.clienteTelefono,
-            tipo: 'servicio_programado', mensaje: text, estado: 'enviado',
-            fecha: admin.firestore.FieldValue.serverTimestamp()
+            tipo: 'servicio_programado', mensaje: text, estado: 'enviado', fecha: admin.firestore.FieldValue.serverTimestamp()
         });
         res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+        console.error('[Nova] Error:', error.message);
+        try { await db.collection('notificaciones_whatsapp').add({ clienteNombre: data.clienteNombre, clienteTelefono: data.clienteTelefono, tipo: 'servicio_programado', mensaje: '', estado: 'error', error: error.message, fecha: admin.firestore.FieldValue.serverTimestamp() }); } catch(e) {}
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// ¡Y ESTA ES LA API DE MAPAS Y CLIMA QUE TAMBIÉN FALTABA!
 app.post('/send-departure-notification', authMiddleware, async (req, res) => {
     const data = req.body;
     if (!isReady) return res.status(503).json({ error: 'Nova no está conectada' });
@@ -578,7 +575,7 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
                 duracion = leg.duration_in_traffic?.text || leg.duration.text;
                 distancia = leg.distance.text;
             }
-        } catch(e) {}
+        } catch(e) { console.error('[Nova] Maps error:', e.message); }
 
         let temperatura = 'N/A', sensacion = 'N/A', descripcion = 'N/A', humedad = 'N/A', recomendacion = '';
         try {
@@ -591,48 +588,59 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
             else if (temperatura < 14) recomendacion = '🧥 *Recomendación:* Lleva abrigo o chaqueta.';
             else if (temperatura > 24) recomendacion = '☀️ *Recomendación:* Ropa ligera y protector solar.';
             else recomendacion = '✅ *Recomendación:* El clima está agradable. ¡Disfruta tu viaje!';
-        } catch(e) {}
+        } catch(e) { console.error('[Nova] Weather error:', e.message); }
 
         const text = `🚐 *¡Es hora de tu servicio!*\n\nHola *${data.clienteNombre}*, soy *Nova* de *Transportes Especiales J&J* 👋\n\nTu conductor ya está en camino:\n\n━━━━━━━━━━━━━━━━\n🗺️ *Distancia:* ${distancia}\n⏱️ *Tiempo estimado:* ${duracion}\n━━━━━━━━━━━━━━━━\n\n🌤️ *Clima en tu destino:*\n🌡️ ${temperatura}°C (sensación ${sensacion}°C)\n💧 Humedad: ${humedad}%\n☁️ ${descripcion}\n\n${recomendacion}\n\n¡Buen viaje! 🌟\n*Transportes Especiales J&J*`;
         await sock.sendMessage(jid, { text });
+        console.log('[Nova] ✅ Notificación de salida enviada a:', jid);
         await db.collection('notificaciones_whatsapp').add({
             clienteNombre: data.clienteNombre, clienteTelefono: data.clienteTelefono,
-            tipo: 'notificacion_salida', mensaje: text, estado: 'enviado',
-            fecha: admin.firestore.FieldValue.serverTimestamp()
+            tipo: 'notificacion_salida', mensaje: text, estado: 'enviado', fecha: admin.firestore.FieldValue.serverTimestamp()
         });
         res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+        console.error('[Nova] Error:', error.message);
+        try { await db.collection('notificaciones_whatsapp').add({ clienteNombre: data.clienteNombre, clienteTelefono: data.clienteTelefono, tipo: 'notificacion_salida', mensaje: '', estado: 'error', error: error.message, fecha: admin.firestore.FieldValue.serverTimestamp() }); } catch(e) {}
+        res.status(500).json({ error: error.message });
+    }
 });
 
 cron.schedule('* * * * *', async () => {
     if (!isReady) return;
     const now = new Date();
+    console.log(`[Cron] Revisando servicios: ${now.toISOString()}`);
     try {
         const snapshot = await db.collection('services')
             .where('estado', 'in', ['Programado', 'programado'])
             .where('notificacionSalidaEnviada', '==', false)
             .get();
 
+        console.log(`[Cron] Servicios encontrados: ${snapshot.docs.length}`);
+
         for (const docSnap of snapshot.docs) {
             const s = docSnap.data();
             let horaRecogida = null;
 
             if (s.fecha && s.hora) {
-                try { horaRecogida = new Date(`${s.fecha.substring(0, 10)}T${s.hora}:00-05:00`); } 
-                catch(e) { continue; }
-            } else { continue; }
+                try {
+                    const fechaStr = `${s.fecha.substring(0, 10)}T${s.hora}:00-05:00`;
+                    horaRecogida = new Date(fechaStr);
+                } catch(e) { console.error('[Cron] Error fecha:', e.message); continue; }
+            } else { console.log(`[Cron] Sin fecha/hora para: ${docSnap.id}`); continue; }
 
             const diffMin = (now - horaRecogida) / 60000;
+            console.log(`[Cron] ${docSnap.id}: diff=${diffMin.toFixed(2)}min`);
 
             if (diffMin >= 0 && diffMin <= 2) {
                 const phone = formatPhone(s.telefonoCliente || s.contactNumber);
-                if (!phone) continue;
+                if (!phone) { console.error('[Cron] Sin teléfono para', docSnap.id); continue; }
 
                 try {
                     await docSnap.ref.update({
                         estado: 'En Servicio', notificacionSalidaEnviada: true,
                         iniciadoAutomaticamente: true, horaInicioReal: admin.firestore.FieldValue.serverTimestamp()
                     });
+                    console.log(`[Cron] ✅ Servicio ${docSnap.id} cambiado a En Servicio`);
 
                     await fetch(`http://localhost:${port}/send-departure-notification`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
@@ -648,12 +656,13 @@ cron.schedule('* * * * *', async () => {
                             const gpsLink = `https://studio--jj-connect--18988325-5ab9e.us-central1.hosted.app/gps/${docSnap.id}`;
                             const msgConductor = `🚐 *Servicio ${s.consecutivo || docSnap.id} INICIADO*\n\nHola *${s.conductor}*, es la hora de tu servicio.\n\n📍 *Destino:* ${s.destino}\n👤 *Cliente:* ${s.clienteNombre || s.cliente}\n📞 *Contacto cliente:* ${s.telefonoCliente}\n\n━━━━━━━━━━━━━━━━\n⚠️ *IMPORTANTE:* Abre este link para activar el GPS y NO lo cierres durante el trayecto:\n\n🔗 ${gpsLink}\n━━━━━━━━━━━━━━━━\n\n¡Buen viaje! 🌟`;
                             await sock.sendMessage(conductorJid, { text: msgConductor });
+                            console.log(`[Cron] ✅ Link GPS enviado al conductor ${s.conductor}`);
                         }
                     }
-                } catch(e) {}
+                } catch(e) { console.error(`[Cron] Error:`, e.message); }
             }
         }
-    } catch (error) {}
+    } catch (error) { console.error('[Cron] Error:', error.message); }
 });
 
 app.listen(port, '0.0.0.0', () => {
