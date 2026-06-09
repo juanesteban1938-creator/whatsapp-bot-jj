@@ -1,6 +1,6 @@
 /**
  * J&J Connect - WhatsApp Bot Engine (Nova)
- * Versión: 7.5.0 (Código Maestro 100% Verificado)
+ * Versión: 7.6.0 (Actualización de Enrutamiento, Modo Agente y Contexto Visual)
  */
 
 const express = require('express');
@@ -346,6 +346,9 @@ async function connectToWhatsApp() {
         const jid = msg.key.remoteJid;
         if (!jid || jid.includes('@g.us')) return;
 
+        // =====================================================================
+        // REGLA 1: ACTIVACIÓN DE MODO AGENTE (El silenciador automático)
+        // =====================================================================
         if (msg.key.fromMe) {
             try {
                 await db.collection('modo_agente').doc(jid).set({ activo: true, activadoPor: 'respuesta_directa_whatsapp', fecha: new Date().toISOString() });
@@ -364,10 +367,71 @@ async function connectToWhatsApp() {
         const ADMIN_LID = '55267655942264'; 
         const esAdmin = telefono === ADMIN_PHONE || telefonoConCodigo === `57${ADMIN_PHONE}` || jid.includes(ADMIN_LID);
 
+        // =====================================================================
+        // REGLA 2: BLOQUEO POR MODO AGENTE ACTIVO
+        // Si ya tomaste el control, Nova se queda callada y no procesa nada
+        // =====================================================================
+        try {
+            const agenteSnap = await db.collection('modo_agente').doc(jid).get();
+            if (agenteSnap.exists && !esAdmin) {
+                const data = agenteSnap.data();
+                const horasTranscurridas = (Date.now() - new Date(data.fecha).getTime()) / 3600000;
+                if (horasTranscurridas < 72) { 
+                    console.log(`[Nova] 🧑 Silenciada: Agente activo para ${telefono}`); 
+                    return; // CORTA AQUÍ. Nova no habla.
+                } else { 
+                    await db.collection('modo_agente').doc(jid).delete(); 
+                    console.log(`[Nova] ⏱️ Modo agente expirado para ${telefono}`); 
+                }
+            }
+        } catch(e) { console.error('[Nova] Error verificando modo agente:', e.message); }
+
+        // =====================================================================
+        // REGLA 3: ENRUTAMIENTO EXCLUSIVO PARA CONDUCTORES
+        // =====================================================================
+        try {
+            if (!esAdmin) {
+                const conductorDoc = await db.collection('conductores').doc(telefono).get();
+                if (conductorDoc.exists) {
+                    if (esImagen) {
+                        console.log(`[Nova] 🖼️ Imagen recibida de CONDUCTOR ${telefono}. Ignorando IA de pagos.`);
+                        await guardarMensaje(jid, telefono, '📎 Imagen operativa (Conductor)', 'entrante', telefono);
+                        return; // No procesa Gemini
+                    } else {
+                        await enviar(jid, telefono, "Perfecto, nos pondremos en contacto con usted.");
+                        return; // No muestra el menú de clientes
+                    }
+                }
+            }
+        } catch(e) { console.error('[Nova] Error verificando conductor:', e.message); }
+
+        // =====================================================================
+        // REGLA 4 Y PROCESAMIENTO DE IMÁGENES GEMINI
+        // =====================================================================
         if (esImagen) {
             console.log(`[Nova] 🖼️ Imagen recibida de ${telefono}`);
             await guardarMensaje(jid, telefono, '📎 Imagen recibida', 'entrante', telefono);
 
+            // Validar si el cliente tiene pagos pendientes ANTES de ir a Gemini
+            let tienePendiente = false;
+            if (esAdmin) {
+                tienePendiente = true; // El admin siempre puede mandar comprobantes
+            } else {
+                try {
+                    const servSnap = await db.collection('services')
+                        .where('telefonoCliente', 'in', [telefono, telefonoConCodigo])
+                        .where('estadoPago', 'in', ['Pendiente', 'Anticipo'])
+                        .orderBy('fecha', 'desc').limit(1).get();
+                    if (!servSnap.empty) tienePendiente = true;
+                } catch(e) { console.error('[Nova] Error revisando si tiene pendiente:', e.message); }
+            }
+
+            if (!tienePendiente) {
+                await enviar(jid, telefono, `He recibido tu imagen 📎\n\nSi deseas agendar un viaje con estos datos, por favor indícamelo, o escribe *hola* para ver las opciones.`);
+                return; // Corta aquí, salva el consumo de Gemini API
+            }
+
+            // Si tiene pendiente, procede con Gemini
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', { }, { logger: pino({ level: 'silent' }) });
                 const base64Image = buffer.toString('base64');
@@ -473,21 +537,12 @@ async function connectToWhatsApp() {
             } catch(e) {}
         }
 
-        try {
-            const agenteSnap = await db.collection('modo_agente').doc(jid).get();
-            if (agenteSnap.exists) {
-                const data = agenteSnap.data();
-                const horasTranscurridas = (Date.now() - new Date(data.fecha).getTime()) / 3600000;
-                if (horasTranscurridas < 72) { console.log(`[Nova] 🧑 Agente activo para ${telefono}`); return; } 
-                else { await db.collection('modo_agente').doc(jid).delete(); console.log(`[Nova] ⏱️ Modo agente expirado para ${telefono}`); }
-            }
-        } catch(e) { console.error('[Nova] Error verificando modo agente:', e.message); }
-
         let sesion = null;
         try { sesion = await obtenerSesion(jid); } catch(e) {}
         try { await procesarFlujo(jid, telefono, textoRaw, nombreCliente, sesion); } catch(e) { console.error('[Nova] Error en flujo:', e.message); }
     });
 }
+
 const authMiddleware = (req, res, next) => {
     if (API_KEY && req.headers['x-api-key'] !== API_KEY) return res.status(401).json({ error: 'No autorizado.' });
     next();
@@ -584,7 +639,7 @@ app.post('/send-departure-notification', authMiddleware, async (req, res) => {
             temperatura = Math.round(wData.main.temp); sensacion = Math.round(wData.main.feels_like);
             descripcion = wData.weather[0].description; humedad = wData.main.humidity;
             const climaMain = wData.weather[0].main;
-            if (['Rain','Drizzle','Thunderstorm'].includes(climaMain)) recomendacion = '🌂 *Recomendación:* Lleva paraguas o impermeable.';
+            if ['Rain','Drizzle','Thunderstorm'].includes(climaMain) recomendacion = '🌂 *Recomendación:* Lleva paraguas o impermeable.';
             else if (temperatura < 14) recomendacion = '🧥 *Recomendación:* Lleva abrigo o chaqueta.';
             else if (temperatura > 24) recomendacion = '☀️ *Recomendación:* Ropa ligera y protector solar.';
             else recomendacion = '✅ *Recomendación:* El clima está agradable. ¡Disfruta tu viaje!';
@@ -643,29 +698,4 @@ cron.schedule('* * * * *', async () => {
                     console.log(`[Cron] ✅ Servicio ${docSnap.id} cambiado a En Servicio`);
 
                     await fetch(`http://localhost:${port}/send-departure-notification`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
-                        body: JSON.stringify({
-                            clienteTelefono: String(s.telefonoCliente || s.contactNumber),
-                            clienteNombre: s.clienteNombre || s.cliente, origen: s.origen, destino: s.destino
-                        })
-                    });
-
-                    if (s.conductorTelefono) {
-                        const conductorJid = formatPhone(s.conductorTelefono);
-                        if (conductorJid) {
-                            const gpsLink = `https://studio--jj-connect--18988325-5ab9e.us-central1.hosted.app/gps/${docSnap.id}`;
-                            const msgConductor = `🚐 *Servicio ${s.consecutivo || docSnap.id} INICIADO*\n\nHola *${s.conductor}*, es la hora de tu servicio.\n\n📍 *Destino:* ${s.destino}\n👤 *Cliente:* ${s.clienteNombre || s.cliente}\n📞 *Contacto cliente:* ${s.telefonoCliente}\n\n━━━━━━━━━━━━━━━━\n⚠️ *IMPORTANTE:* Abre este link para activar el GPS y NO lo cierres durante el trayecto:\n\n🔗 ${gpsLink}\n━━━━━━━━━━━━━━━━\n\n¡Buen viaje! 🌟`;
-                            await sock.sendMessage(conductorJid, { text: msgConductor });
-                            console.log(`[Cron] ✅ Link GPS enviado al conductor ${s.conductor}`);
-                        }
-                    }
-                } catch(e) { console.error(`[Cron] Error:`, e.message); }
-            }
-        }
-    } catch (error) { console.error('[Cron] Error:', error.message); }
-});
-
-app.listen(port, '0.0.0.0', () => {
-    console.log(`[Nova] Servidor activo en puerto ${port}`);
-    connectToWhatsApp().catch(err => console.error('[Nova] Error:', err));
-});
+                        method: 'POST', headers: { '
